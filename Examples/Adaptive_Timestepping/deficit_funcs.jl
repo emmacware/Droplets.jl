@@ -13,8 +13,7 @@ function init_droplets(exp,initm::PyObject)
     attributes = Dict()
     attributes["volume"], attributes["multiplicity"] = initm(spectrum=initial_spectrum).sample(2^exp)
     attributes["multiplicity"] = Int.(round.(attributes["multiplicity"]))
-    attributes["radius"] = volume_to_radius.(attributes["volume"])
-    droplets = droplet_attributes(attributes["multiplicity"], attributes["radius"], attributes["volume"])
+    droplets = droplet_attributes(attributes["multiplicity"], attributes["volume"])
     return droplets
 end
 
@@ -29,7 +28,7 @@ function all_runs(scheme,init_py::NamedTuple,runs::Vector,
     
             for dt in dts
                     coagsettings = coag_settings{FT}(Ns=2^runs[exp],Δt=dt)
-                    runsettings=run_settings{FT}(coag_threading=Serial(),scheme=scheme,init_method ="$(j)")    
+                    runsettings=run_settings{FT}(coag_threading=Serial(),scheme=scheme,init_method ="$(j)",smooth=false)    
                 for i in 1:seeds                    
                     droplets = deepcopy(starting_drops)
                     run__(i, droplets, coagsettings, runsettings, data)
@@ -48,8 +47,9 @@ function fill_heatmap_data!(scheme::none,data,results,runs::Vector,dts::Vector{F
             dt = dts[i]
             run = runs[j]
             results[f_idx]["MeanTime"][i][j] = (mean([data[(f_idx, run, dt, s)][2] for s in 2:seeds]))
-            avgbins = mean([data[(f_idx, run, dt, s)][1] for s in 2:seeds])
-            results[f_idx]["Error"][i][j] = error_measure(avgbins[:,4],Gsolution[:,4])
+            # avgbins = mean([data[(f_idx, run, dt, s)][1] for s in 2:seeds])
+            results[f_idx]["Error"][i][j] = mean([data[(f_idx, run, dt, s)][3] for s in 2:seeds])
+            results[f_idx]["Error_std"][i][j] = std([data[(f_idx, run, dt, s)][3] for s in 2:seeds])            
             results[f_idx]["Deficit"][i][j] = (mean([data[(f_idx, run, dt, s)][4] for s in 2:seeds]))/3600
         end
     end
@@ -63,8 +63,10 @@ function fill_heatmap_data!(scheme::Adaptive,data,results,runs::Vector,dts::Vect
             dt = dts[i]
             run = runs[j]
             results[f_idx]["MeanTime"][i][j] = (mean([data[(f_idx, run, dt, s)][2] for s in 2:seeds]))
-            avgbins = mean([data[(f_idx, run, dt, s)][1] for s in 2:seeds])
-            results[f_idx]["Error"][i][j] = error_measure(avgbins[:,4],Gsolution[:,4])
+            # avgbins = mean([data[(f_idx, run, dt, s)][1] for s in 2:seeds])
+            results[f_idx]["Error"][i][j] = mean([data[(f_idx, run, dt, s)][3] for s in 2:seeds])
+            results[f_idx]["Error_std"][i][j] = std([data[(f_idx, run, dt, s)][3] for s in 2:seeds])            
+
         end
     end
 end
@@ -76,6 +78,7 @@ function heatmap_data!(scheme::none,data,results,init_names,runs,dts,seeds)
     for f_idx in init_names
         results[f_idx] = Dict()
         results[f_idx]["Error"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
+        results[f_idx]["Error_std"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
         results[f_idx]["MeanTime"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
         results[f_idx]["Deficit"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
 
@@ -89,6 +92,7 @@ function heatmap_data!(scheme::Adaptive,data,results,init_names,runs,dts,seeds)
     for f_idx in init_names
         results[f_idx] = Dict()
         results[f_idx]["Error"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
+        results[f_idx]["Error_std"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
         results[f_idx]["MeanTime"] = [[0.0 for _ in 1:num_runs] for _ in 1:num_dts]
 
         fill_heatmap_data!(scheme,data,results,runs,dts,seeds,f_idx)
@@ -107,32 +111,46 @@ function create_heatmap(results,normerror,normtime,runs,dts,init_names;Deficit =
     time_max = 5e2
     if Deficit
         deficit_min = 1
-        deficit_max = 1e9
+        deficit_max = 6e5
     end
-    for f_idx in 1:num_init_m
-        heatmap_error = each_heatmap(runs,dts,results[init_names[f_idx]]["Error"],"Error",error_min,error_max,norm=normerror)
-        heatmap_time = each_heatmap(runs,dts,results[init_names[f_idx]]["MeanTime"],"MeanTime",time_min,time_max,norm=normtime)
+    # for f_idx in 1:num_init_m
+        heatmap_error = [each_heatmap(runs,dts,results[init_names[f_idx]]["Error"],"Error",error_min,error_max,norm=normerror) for f_idx in 1:num_init_m]
+        heatmaperr = plot(heatmap_error..., layout=(1, num_init_m), size=(1200, 400), title="Error", xlabel="log2(Ns)", ylabel="dt", colorbar=true,colorbar_title="Error", colorbar_scale=:log10, colorbar_titlefont=font(10, "Arial", 0, 0), clim=(error_min, error_max))
+        heatmap_time = [each_heatmap(runs,dts,results[init_names[f_idx]]["MeanTime"],"MeanTime",time_min,time_max,norm=normtime) for f_idx in 1:num_init_m]
+        heatmap_time = plot(heatmap_time..., layout=(1, num_init_m), size=(1200, 400), title="MeanTime", xlabel="log2(Ns)", ylabel="dt", colorbar_title="MeanTime", colorbar_scale=:log10, colorbar_titlefont=font(10, "Arial", 0, 0), clim=(time_min, time_max))
         
-        push!(heatmaps, heatmap_error)
+        push!(heatmaps, heatmaperr)
         push!(heatmaps, heatmap_time)
         if Deficit
-            heatmap_deficit = each_heatmap(runs,dts,results[init_names[f_idx]]["Deficit"],"Deficit",deficit_min,deficit_max)
+            heatmap_deficit = [each_heatmap(runs,dts,results[init_names[f_idx]]["Deficit"],"Deficit",deficit_min,deficit_max) for f_idx in 1:num_init_m]
+            heatmap_deficit = plot(heatmap_deficit..., layout=(1, num_init_m), size=(1200, 400), title="Deficit", xlabel="log2(Ns)", ylabel="dt", colorbar_title="Deficit", colorbar_scale=:log10, colorbar_titlefont=font(10, "Arial", 0, 0), clim=(deficit_min, deficit_max))
             push!(heatmaps, heatmap_deficit)
         end
-    end
+    # end
     return heatmaps
 end
 
-function each_heatmap(runs,dts,data,name,min,max;norm = 1,cgrad = :viridis)
+function each_heatmap(runs,dts,data,name,min,max;norm = 1,cgrad = :tempo)
     num_dts = length(dts)
     dt_values = 1:num_dts
     dtslabel = string.(dts')
-
-    heatmap(runs, dt_values, hcat(data...)'./norm, xticks=runs, yticks=(1:num_dts, string.(dtslabel)),
-            xlabel="log2(Ns)", ylabel="dt", colorbar_title=name, title=name,
-            c=cgrad,colorbar_scale=:log10,
-            colorbar_titlefont=font(10, "Arial", 0, 0),colorbar_titlepadding=.1,clim=(min, max))
-    contour!(runs, dt_values, hcat(data...)'./norm, levels=20, color=:blues, clim=(min, max), zscale=:log10)
+    if name == "Deficit"
+        heatmap(runs, dt_values, hcat(data...)'./norm, xticks=runs, yticks=(1:num_dts, string.(dtslabel)),
+                xlabel="log2(Ns)", ylabel="dt", colorbar_title=name,
+                c=cgrad,colorbar_scale=:log10, categorical = true,
+                colorbar = false,
+                colorbar_titlefont=font(10, "Arial", 0, 0),clim=(min, max))
+    else
+        contour(runs, dt_values, (hcat(data...)'./norm), xticks=runs, yticks=(1:num_dts, string.(dtslabel)),
+        xlabel="log2(Ns)", ylabel="dt", colorbar_title=name,
+        fill = true,levels=11, 
+        color=cgrad,clim=(min, max), categorical = true,
+        colorbar = false)
+        # thickness_scaling = 1.1,
+        # colorbar_title_location = :top,
+        # colorbar_titlefont=10,
+        # colorbar_scale=:log2)
+    end 
 end
 
 
@@ -202,12 +220,17 @@ end
 function error_versus_time_vanishingpoint(results,runs,dts,shape;line=:dash)
     err = hcat(results["Error"]...)
     times = hcat(results["MeanTime"]...)
+    stderr = hcat(results["Error_std"]...)
     pl1 =plot!()
     colors = [:red, :blue, :green, :orange, :purple, :brown, :pink, :gray, :cyan, :magenta]
     for i in eachindex(dts)
-        plot!(times[:,i],err[:,i],scale=:log,ls=line,
+        plot!(times[:,i],err[:,i],
+        scale=:log,
+        ls=line,
+        ribbon=stderr[:,i],
+        fillalpha=0.2,
         label="dt = $(dts[i])",
-        markershape=shape,markersize=(runs.-12),
+        markershape=shape,markersize=((runs.-11)/1.5),
         markerstrokecolor=false,
         color=colors[i % length(colors) + 1])
     end
@@ -218,50 +241,50 @@ function error_versus_time_vanishingpoint(results,runs,dts,shape;line=:dash)
 end
 
 # plot(title="No Adaptivivity")
-# p1 = error_versus_time_vanishingpoint(Droplets_Regular["ConstantMultiplicity"]["Error"],log2_Ns,dts,:circle, line=:dash)
+# p1 = error_versus_time_vanishingpoint(Droplets_Regular["ConstantMultiplicity"],log2_Ns,dts,:circle, line=:dash)
 # plot(title="Adaptivivity")
-# p2 = error_versus_time_vanishingpoint(Droplets_Adaptive["ConstantMultiplicity"]["Error"],log2_Ns,dts,:square, line=:solid)
+# p2 = error_versus_time_vanishingpoint(Droplets_Adaptive["ConstantMultiplicity"],log2_Ns,dts,:square, line=:solid)
 # plot(p1,p2,layout=(2,1),legend=:topright)
 
-plot(title="Droplets No Adaptivivity")
-d1 = error_versusdt(Droplets_Regular["ConstantMultiplicity"]["Error"],log2_Ns,dts,:circle)
-plot(title="Droplets Adaptivivity")
-d2 = error_versusdt(Droplets_Adaptive["ConstantMultiplicity"]["Error"],log2_Ns,dts,:square)
-plot(d1,d2,layout=(1,2),size=(900,400), legend=:topleft)
+# plot(title="Droplets No Adaptivivity")
+# d1 = error_versusdt(Droplets_Regular["ConstantMultiplicity"]["Error"],log2_Ns,dts,:circle)
+# plot(title="Droplets Adaptivivity")
+# d2 = error_versusdt(Droplets_Adaptive["ConstantMultiplicity"]["Error"],log2_Ns,dts,:square)
+# plot(d1,d2,layout=(1,2),size=(900,400), legend=:topleft)
 
-plot(title = "PySDM No Adaptivivity")
-p1 = error_versusdt(PySDM_Data["regular"]["ConstantMultiplicity"]["Error"],log2_Ns,dts,:circle)
-plot(title = "PySDM Adaptivivity")
-p2 = error_versusdt(PySDM_Data["adaptive"]["ConstantMultiplicity"]["Error"],log2_Ns,dts,:square)
-plot(p1,p2,layout=(1,2),legend=:topright)
+# plot(title = "PySDM No Adaptivivity")
+# p1 = error_versusdt(PySDM_Data["regular"]["ConstantMultiplicity"]["Error"],log2_Ns,dts,:circle)
+# plot(title = "PySDM Adaptivivity")
+# p2 = error_versusdt(PySDM_Data["adaptive"]["ConstantMultiplicity"]["Error"],log2_Ns,dts,:square)
+# plot(p1,p2,layout=(1,2),legend=:topright)
 
-plot(title="PyPartMC Error")
-pp1 = error_versusdt(pyparterror["PyPartMC_err"],log2_Ns,dts,:circle)
+# plot(title="PyPartMC Error")
+# pp1 = error_versusdt(pyparterror["PyPartMC_err"],log2_Ns,dts,:circle)
 
 
-fplot = Array{Plots.Plot{Plots.GRBackend}}(undef, length(init_names))
-for i in 1:3
-    plot()
-    f = init_names[i]
-    plot(title="Droplets No Adaptivivity")
-    d1 = error_versusdt(Droplets_Regular[f]["Error"],log2_Ns,dts,:circle)
-    plot(title="Droplets Adaptivivity")
-    d2 = error_versusdt(Droplets_Adaptive[f]["Error"],log2_Ns,dts,:square)
-    plot(d1,d2,layout=(1,2),size=(900,400))
+# fplot = Array{Plots.Plot{Plots.GRBackend}}(undef, length(init_names))
+# for i in 1:3
+#     plot()
+#     f = init_names[i]
+#     plot(title="Droplets No Adaptivivity")
+#     d1 = error_versusdt(Droplets_Regular[f]["Error"],log2_Ns,dts,:circle)
+#     plot(title="Droplets Adaptivivity")
+#     d2 = error_versusdt(Droplets_Adaptive[f]["Error"],log2_Ns,dts,:square)
+#     # plot(d1,d2,layout=(1,2),size=(900,400))
 
-    plot(title = "PySDM No Adaptivivity")
-    p1 = error_versusdt(PySDM_Data["regular"][f]["Error"]/1e6,log2_Ns,dts,:circle)
-    plot(title = "PySDM Adaptivivity")
-    p2 = error_versusdt(PySDM_Data["adaptive"][f]["Error"]/1e3,log2_Ns,dts,:square)
-    plot(p1,p2,layout=(1,2),size=(900,400))
+#     plot(title = "PySDM No Adaptivivity")
+#     p1 = error_versusdt(PySDM_Data["regular"][f]["Error"],log2_Ns,dts,:circle)
+#     plot(title = "PySDM Adaptivivity")
+#     p2 = error_versusdt(PySDM_Data["adaptive"][f]["Error"],log2_Ns,dts,:square)
+#     # plot(p1,p2,layout=(1,2),size=(900,400))
 
-    plot(title="PyPartMC Error")
-    pp1 = error_versusdt(pyparterror["PyPartMC_err"],log2_Ns,dts,:circle)
+#     # plot(title="PyPartMC Error")
+#     # pp1 = error_versusdt(pyparterror["PyPartMC_err"],log2_Ns,dts,:circle)
 
-    emptyplot = plot()
+#     emptyplot = plot()
 
-    fplot[i] = plot(d1,p1,pp1,d2,p2,layout=(2,3),size=(1200,800),suptitle=f)
-end
+#     fplot[i] = plot(d1,p1,d2,p2,layout=(2,2),size=(1200,800),suptitle=f)
+# end
 
 # plot(fplot...,layout=(1,3),size=(1800, 600))
  
