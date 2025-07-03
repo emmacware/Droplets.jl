@@ -1,0 +1,172 @@
+import OrdinaryDiffEq as ODE
+import ClimaCore as CC
+import ClimaParams as CP
+import CloudMicrophysics.Parameters as CMP
+import KinematicDriver
+import KinematicDriver.K1DModel as K1D
+import KinematicDriver.K2DModel as K2D
+using Droplets
+
+ENV["GKSwstype"] = "nul"
+using ClimaCorePlots, Plots
+Plots.GRBackend()
+
+include(joinpath(pkgdir(KinematicDriver), "test", "create_parameters.jl"))
+
+opts = Dict(
+    "moisture_choice" => "NonEquilibriumMoisture",
+    "precipitation_choice" => "Precipitation1M",
+    "rain_formation_choice" => "CliMA_1M",
+    "sedimentation_choice" => "CliMA_1M",
+    "w1" => 3.0,
+    "t1" => 1800.0,
+    "p0" => 100000.0,
+    "precip_sources" => true,
+    "precip_sinks" => true,
+    "prescribed_Nd" => 1e8,
+    "r_dry" => 0.04 * 1e-6,
+    "std_dry" => 1.4,
+    "kappa" => 0.9,
+    "domain_width" => 3000.0,
+    "domain_height" => 3000.0,
+    "nx" => 32,
+    "nz" => 32,
+    "npoly" => 4,
+    "dt" => 1.0,
+    "dt_output" => 120.0,
+    "t_ini" => 0.0,
+    "t_end" => 3600.0,
+)
+
+const FT = Float64
+
+moisture_choice = opts["moisture_choice"]
+precipitation_choice = opts["precipitation_choice"]
+rain_formation_choice = opts["rain_formation_choice"]
+sedimentation_choice = opts["sedimentation_choice"]
+
+
+output_folder = string("Output_", moisture_choice, "_", precipitation_choice)
+if precipitation_choice in ["Precipitation1M", "Precipitation2M"]
+    output_folder = output_folder * "_" * rain_formation_choice
+    if sedimentation_choice == "Chen2022"
+        output_folder = output_folder * "_Chen2022"
+    end
+end
+path = joinpath(@__DIR__, output_folder)
+mkpath(path)
+
+    # Overwrite the defaults parameters based on options
+default_toml_dict = CP.create_toml_dict(FT)
+toml_dict = override_toml_dict(
+        path,
+        default_toml_dict,
+        w1 = FT(opts["w1"]),
+        t1 = FT(opts["t1"]),
+        p0 = FT(opts["p0"]),
+        precip_sources = Int(opts["precip_sources"]),
+        precip_sinks = Int(opts["precip_sinks"]),
+        qtot_flux_correction = 1,
+        prescribed_Nd = FT(opts["prescribed_Nd"]),
+        r_dry = FT(opts["r_dry"]),
+        std_dry = FT(opts["std_dry"]),
+        κ = FT(opts["kappa"]),
+    )
+    # Create Thermodynamics.jl and KinematicDriver model parameters
+    # (some of the CloudMicrophysics.jl parameters structs are created later based on model choices)
+thermo_params = create_thermodynamics_parameters(toml_dict)
+common_params = create_common_parameters(toml_dict)
+kid_params = create_kid_parameters(toml_dict)
+air_params = CMP.AirProperties(toml_dict)
+activation_params = CMP.AerosolActivationParameters(toml_dict)
+
+moisture = CO.get_moisture_type(moisture_choice, toml_dict)
+precip = CO.get_precipitation_type(
+        precipitation_choice,
+        toml_dict,
+        rain_formation_choice = rain_formation_choice,
+        sedimentation_choice = sedimentation_choice,
+    )
+
+    # Initialize the timestepping struct
+TS = CO.TimeStepping(FT(opts["dt"]), FT(opts["dt_output"]), FT(opts["t_end"]))
+
+    # set up function space
+hv_center_space, hv_face_space = K2D.make_function_space(
+        FT,
+        xlim = (0, opts["domain_width"]),
+        zlim = (0, opts["domain_height"]),
+        helem = opts["nx"],
+        velem = opts["nz"],
+        npoly = opts["npoly"],
+    )
+coords = CC.Fields.coordinate_field(hv_center_space)
+face_coords = CC.Fields.coordinate_field(hv_face_space)
+
+    # Initialize the netcdf output Stats struct
+fname = joinpath(path, "Output.nc")
+Stats = CO.NetCDFIO_Stats(
+        fname,
+        1.0,
+        parent(face_coords.z)[:, 1, 1, 1],
+        parent(coords.z)[:, 1, 1, 1],
+        x = parent(coords.x)[1, 1, 1, :],
+    )
+
+# Solve the initial value problem for density profile
+ρ_profile = CO.ρ_ivp(FT, kid_params, thermo_params)
+# Create the initial condition profiles
+init = map(coord -> CO.initial_condition_1d(FT, common_params, kid_params, thermo_params, ρ_profile, coord.z), coords)
+
+    # Create state vector and apply initial condition
+Y = CO.initialise_state(moisture, precip, init)
+
+    # Create aux vector and apply initial condition
+aux = K2D.initialise_aux(
+        FT,
+        init,
+        common_params,
+        kid_params,
+        thermo_params,
+        air_params,
+        activation_params,
+        opts["domain_width"],
+        opts["domain_height"],
+        TS,
+        Stats,
+        hv_center_space,
+        hv_face_space,
+        moisture,
+        precip,
+    )
+
+    # Output the initial condition
+CO.simulation_output(aux, 0.0)
+
+    # Define callbacks for output
+callback_io = ODE.DiscreteCallback(CO.condition_io, CO.affect_io!; save_positions = (false, false))
+callbacks = ODE.CallbackSet(callback_io)
+
+    # Collect all the tendencies into rhs function for ODE solver
+    # based on model choices for the solved equations
+ode_rhs! = K2D.make_rhs_function(moisture, precip)
+
+    # Solve the ODE operator
+# problem = ODE.ODEProblem(ode_rhs!, Y, (FT(opts["t_ini"]), FT(opts["t_end"])), aux)
+# solver = ODE.solve(
+#         problem,
+#         ODE.SSPRK33(),
+#         dt = TS.dt,
+#         saveat = TS.dt_io,
+#         callback = callbacks,
+#         progress = true,
+#         progress_message = (dt, u, p, t) -> t,
+#     )
+
+    colidx = CC.
+
+    (;q_tot, q_liq, q_ice) = aux.microph_variables
+    q = TD.PhasePartition.(q_tot, q_liq, q_ice)
+    ρ = aux.thermo_variables.ρ
+    T = aux.thermo_variables.T
+    SS = TD.supersaturation.(thermo_params, q, ρ, T, TD.Liquid())
