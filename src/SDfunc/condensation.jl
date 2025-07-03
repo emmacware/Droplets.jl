@@ -129,6 +129,14 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
+function drkappakohler(R,dry_r3,kappa,Senv,timestep)
+    a = 3.3 * 10^(-7) / T #(m K/T)
+    b = kappa * dry_r3
+    denom = (FK(T) + FD(T))
+    dr = (Senv - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    return R + dr * timestep > 0 ? dr : -R / timestep
+end
+
 
 """
     drkohler_activated(R, T, Senv, timestep)
@@ -269,6 +277,12 @@ function dq_liq_cond_activated(R, T, Senv, timestep, ρ_air)
     return dql
 end
 
+function dX_droplets!(X,dry_r3, kappa, qv, T, P, dt)
+    # Calculate the change in droplet volume due to condensation
+    R = volume_to_radius.(X)  # Convert volume to radius
+    dX = 4 * π * R^2 * drkappakohler(R,dry_r3,kappa,Senv,timestep)
+    return dX
+end
 
 # function θcondenseupdate!(Sv,θ,Δtg,P,P0)
 #     Exner = (P./P0).^(constants.Rd/constants.Cp)

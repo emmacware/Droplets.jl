@@ -3,7 +3,7 @@
 #---------------------------------------------------------
 
 #types
-export Serial, Parallel,Adaptive,none,coag_settings,droplet_attributes,coagulation_run
+export Serial, Parallel,Adaptive,none,coag_settings,coagulation_run, coagulation_run_spatial
 #coalescence sim
 export coalescence_timestep!
 
@@ -23,7 +23,6 @@ A struct representing the settings for coalescence.
 - `Δt`: The time step for the coalescence simulation.
 - `ΔV`: The volume of the coalescence domain.
 - `Ns`: The number of superdroplets.
-- `scale`: The scaling factor that allows for linear sampling.
 - `R_min`: The minimum radius of sampled droplets, used in some initializations. Radius in meters
 - `R_max`: The maximum radius of sampled droplets, used in some initializations. Radius in meters.
 - `golovin_kernel_coeff`: The Golovin kernel coefficient, 1/seconds.
@@ -48,40 +47,6 @@ Base.@kwdef struct coag_settings{FT<:AbstractFloat}
     R0::FT = FT(30.531e-6) # initial radius
 end
 
-"""
-    abstract type droplet_attributes{FT<:AbstractFloat}
-"""
-abstract type droplet_attributes{FT<:AbstractFloat} end
-
-"""
-    struct simple_droplet_attributes{FT<:AbstractFloat} <:droplet_attributes{FT}
-
-A struct of type droplet_attributes representing the attributes of a droplet.
-
-Fields:
-- FT: AbstractFloat.
-- ξ: Vector of integers representing the multiplicity of each droplet.
-- X: Vector of floats representing the volume of each droplet.
-
-"""
-
-struct simple_droplet_attributes{FT<:AbstractFloat} <:droplet_attributes{FT}
-    ξ::Vector{Int}
-    X::Vector{FT}
-end
-
-"""
-droplet_attributes{FT}(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat}
-Create a new instance of simple_droplet_attributes with the given multiplicity and volume vectors.
-"""
-droplet_attributes{FT}(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat} = 
-    simple_droplet_attributes{FT}(ξ, X)
-"""
-droplet_attributes(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat}
-Create a new instance of simple_droplet_attributes with the given multiplicity and volume vectors.
-"""
-droplet_attributes(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat} = 
-    simple_droplet_attributes{FT}(ξ, X)
 
 """
     struct coagulation_run{FT<:AbstractFloat}
@@ -102,6 +67,7 @@ Fields:
 struct coagulation_run{FT<:AbstractFloat}
     Ns::Int
     I::Vector{Int}
+    scale::FT
     pαdt::Vector{FT}
     ϕ::Vector{FT}
     lowest_zero::Ref{Bool}
@@ -109,11 +75,33 @@ struct coagulation_run{FT<:AbstractFloat}
 
     function coagulation_run{FT}(Ns::Int) where FT<:AbstractFloat
         I = collect(1:Ns)
+        scale = div(Ns * (Ns - 1) , 2) / div(Ns , 2)
         pαdt = zeros(FT, div(Ns, 2))
         ϕ = zeros(FT, div(Ns, 2))
         lowest_zero = Ref(false)
         deficit = Ref(zero(FT))
-        new{FT}(Ns, I, pαdt, ϕ, lowest_zero, deficit)
+        new{FT}(Ns,I, scale, pαdt, ϕ, lowest_zero, deficit)
+    end
+end
+
+struct coagulation_run_spatial{FT<:AbstractFloat}
+
+    N_in_cell::Vector{Int}
+    I::Vector{Int}
+    scale::Vector{FT}
+    pαdt::Vector{Float64}
+    ϕ::Vector{Float64}
+    lowest_zero::Ref{Bool}
+    deficit::Vector{Float64}
+
+    function coagulation_run_spatial{FT}(GridCount::Int, System_Ns) where FT<:AbstractFloat
+        N_in_cell = zeros(Int, div(System_Ns, GridCount))
+        I = collect(1:System_Ns)
+        pαdt = zeros(FT, div(System_Ns, 2))
+        ϕ = zeros(FT, div(System_Ns, 2))
+        lowest_zero = Ref(false)
+        deficit = zeros(FT, length(N_in_cell))
+        new{FT}(N_in_cell, I, pαdt, ϕ, lowest_zero, deficit)
     end
 end
 
@@ -145,11 +133,11 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none, drople
     shuffle!(coag_data.I)
     L = [(coag_data.I[l-1], coag_data.I[l]) for l in 2:2:Ns]
 
-    compute_pαdt!(L, droplets,coag_data,settings.kernel,settings.scale,settings)
+    compute_pαdt!(L, droplets,coag_data,settings.kernel,settings)
 
     rand!(coag_data.ϕ)
 
-    test_pairs!(run,Ns,L,droplets,coag_data)
+    test_pairs!(run,L,droplets,coag_data)
 
 end 
 
@@ -166,7 +154,7 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::Adaptive,dro
 
         adaptive_pαdt!(L,droplets,coag_data,t_left,settings.kernel,settings)
 
-        test_pairs!(run,Ns,L,droplets,coag_data)
+        test_pairs!(run,L,droplets,coag_data)
 
     end
     return nothing

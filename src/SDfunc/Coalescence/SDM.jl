@@ -32,7 +32,7 @@ function pair_Ps_adaptive!(α::Int,pair::Tuple{Int,Int}, droplets::droplet_attri
 
     ξj, ξk = droplets.ξ[j], droplets.ξ[k]
 
-    tmp = ξj * kernel(droplets, pair, settings) * settings.scale / settings.ΔV
+    tmp = ξj * kernel(droplets, pair, settings) * coag_data.scale / settings.ΔV
 
     coag_data.pαdt[α] = tmp
     if tmp*t_left[] > coag_data.ϕ[α]
@@ -54,13 +54,12 @@ Map the probability function over the list of droplet pairs, L, and update the c
 - `droplets::droplet_attributes`: Droplet attributes.
 - `coag_data::coagulation_run`: Coagulation data.
 - `kernel::Function`: Coalescence kernel function.
-- `scale::FT`: Scaling factor for the linear coalescence probability.
 - `coagsettings::coag_settings{FT}`: Coagulation settings.
 
 """
-@inline function compute_pαdt!(L::Vector{Tuple{Int,Int}}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,scale::FT,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+@inline function compute_pαdt!(L::Vector{Tuple{Int,Int}}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     map(i -> pair_Ps!(i, L[i], droplets,coag_data,kernel, coagsettings), eachindex(L))
-    coag_data.pαdt .*=  scale * coagsettings.Δt / coagsettings.ΔV
+    coag_data.pαdt .*= coag_data.scale * coagsettings.Δt / coagsettings.ΔV
 end
 
 @inline function pair_Ps!(α::Int, (j,k)::Tuple{Int,Int}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
@@ -111,10 +110,10 @@ Perform the SDM coalescence update for the superdroplets. Update the droplet att
 - `coag_data::coagulation_run`: The coagulation data.
 """
 
-function test_pairs!(scheme::Serial,Ns::Int,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
+function test_pairs!(scheme::Serial,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
     
     coag_data.lowest_zero[] = false
-    for α::Int in 1:div(Ns, 2)
+    for α::Int in 1:eachindex(L)
             
         if coag_data.ϕ[α] >= coag_data.pαdt[α]
             continue
@@ -126,10 +125,10 @@ function test_pairs!(scheme::Serial,Ns::Int,L::Vector{Tuple{Int,Int}},droplets::
     end
 end
 
-function test_pairs!(scheme::Parallel,Ns::Int,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
+function test_pairs!(scheme::Parallel,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
     
     coag_data.lowest_zero[] = false
-    Threads.@threads for α in 1:div(Ns, 2)
+    Threads.@threads for α in 1:eachindex(L)
         if coag_data.ϕ[α] >= coag_data.pαdt[α]
             continue
         end

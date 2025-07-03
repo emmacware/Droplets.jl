@@ -4,25 +4,18 @@
 
 export update_position!
 
-# based on superdroplet struct type and grid_dict organization
-
-
-
-# Functions:
-# limit(a, N_x)
-# limity(a, N_y)
-# limitvface(a, N_y)
-    # these functions are used to limit the droplet location to the domain,
-    # periodic horizontal boundaries and non-periodic vertical boundaries
-# add_to_grid!(droplet, grid_index, grid_dict)
-    # Adds a droplet to a grid_dict list
-# move_to_grid!(droplet, old_grid_index, new_grid_index, grid_dict)
-    # Moves a droplet from one grid_dict list to another
-# update_position!(droplets,Nx,Ny,dt,ρu,ρv,ρ, grid_dict,gridbox)
-    # Updates the position of the droplets based on the velocity field and grid_dict organization 
-    # maybe has some bugs? I recently redid my indexing which may have caused some issues but it worked before  
-
-
+# Spatial Settings Struct
+Base.@kwdef struct spatial_settings{FT<:AbstractFloat}
+    Nx::Int = 30 
+    Nz::Int = 30 
+    num_grids ::Int = Nx * Nz
+    x_domain::FT = FT(1500.0) 
+    z_domain::FT = FT(1500.0)
+    z_grid_height::FT = z_domain / Nz 
+    x_grid_width::FT = x_domain / Nx 
+    periodic_boundaries_x::Bool = true 
+    settling::Bool = true 
+end
 ############################################################################################
 
 limit(a, N_x) = a > N_x ? a - N_x : a < 1 ? a + N_x : a
@@ -99,4 +92,105 @@ function update_position!(droplets,Nx,Ny,dt,ρu,ρv,ρ, grid_dict,gridbox)
     end
     return droplets, grid_dict
         
+end
+
+
+
+function update_gridflow_position!(droplets::droplet_attributes_1d,dt,grid_vels,spatial_settings)
+    (;upper_face_vel, lower_face_vel) = grid_vels
+    for droplet in droplets
+        droplet.z_loc_in_cell += dt .* (
+            (1 - droplet.z_loc_in_cell/ spatial_settings.z_grid_height ).* lower_face_vel .+
+            (droplet.z_loc_in_cell / spatial_settings.z_grid_height) .* upper_face_vel
+        )
+    end
+end
+
+function update_gridflow_position!(droplets::droplet_attributes_2d,dt,grid_vels)
+    (;upper_face_vel, lower_face_vel, right_face_vel, left_face_vel) = grid_vels
+    for droplet in droplets
+        droplet.z_loc_in_cell += dt .* (
+            (1 - droplet.z_loc_in_cell / spatial_settings.z_grid_height) .* lower_face_vel .+
+            (droplet.z_loc_in_cell / spatial_settings.z_grid_height) .* upper_face_vel
+        )
+        droplet.x_loc_in_cell += dt .* (
+            (1 - droplet.x_loc_in_cell / spatial_settings.x_grid_width) .* left_face_vel .+
+            (droplet.x_loc_in_cell / spatial_settings.x_grid_width) .* right_face_vel
+        )
+    end
+end
+
+function update_position!(droplets::Union{droplet_attributes_1d,droplet_attributes_2d},dt, spatial_settings,grid_vels)
+    update_gridflow_position!(droplets,dt,grid_vels)
+
+    if spatial_settings.settling == true
+        droplets.z_loc_in_cell += dt .* terminal_velocity.(droplets.R)
+    end
+    #test for grid cell id changes.. or just recalculate?
+    droplets.cell_id .= find_grid_cell_id.(droplets,spatial_settings)
+end
+
+function velocity_tendencies!(du,droplets::droplet_attributes_1d,spatial_settings)
+    du.z_loc_in_cell .= find_grid_velocity_z.(droplets)
+    if spatial_settings.settling == true
+        du.z_loc_in_cell .+= terminal_velocity.(volume_to_radius(droplets.X))
+    end
+end
+function velocity_tendencies!(du,droplets::droplet_attributes_2d,spatial_settings)
+    du.z_loc_in_cell, du.x_loc_in_cell .= find_grid_velocity.(droplets)
+    if spatial_settings.settling == true
+        du.z_loc_in_cell .+= terminal_velocity.(volume_to_radius(droplets.X))
+    end
+end
+
+function find_grid_cell_id(droplets::droplet_attributes_1d,spatial_settings)
+    for i in eachindex(droplets.z_loc_in_cell)
+        if droplets.z_loc_in_cell[i] < 0
+            droplets.cell_id[i] -= 1
+            if droplets.cell_id != 0
+                droplets.z_loc_in_cell[i] += spatial_settings.z_grid_height
+            end
+        elseif droplets.z_loc_in_cell[i] > spatial_settings.z_grid_height
+            droplets.cell_id[i] += 1 
+            if droplets.cell_id[i] != spatial_settings.Nz
+                droplets.z_loc_in_cell[i] -= spatial_settings.z_grid_height
+            end
+        end
+    end
+end
+    
+function find_grid_cell_id(droplets::droplet_attributes_2d,spatial_settings)
+    for i in eachindex(droplets.z_loc_in_cell)
+        if droplets.z_loc_in_cell[i] < 0
+            droplets.cell_id[i] -= Nz
+            if droplets.cell_id <= 0
+                droplets.cell_id = 0
+            else
+                droplets.z_loc_in_cell[i] += spatial_settings.z_grid_height
+            end
+        elseif droplets.z_loc_in_cell[i] > spatial_settings.z_grid_height
+            droplets.cell_id[i] += Nz 
+            if droplets.cell_id[i] >= spatial_settings.Nz * spatial_settings.Nx
+                droplets.cell_id[i] = spatial_settings.Nz * spatial_settings.Ny + 1
+            else
+                droplets.z_loc_in_cell[i] -= spatial_settings.z_grid_height
+            end
+        end
+    end
+
+    for i in eachindex(droplets.x_loc_in_cell)
+        if droplets.x_loc_in_cell[i] < 0
+            if rem(droplets.cell_id[i], spatial_settings.Nx) == 1
+                droplets.cell_id[i] += spatial_settings.Nx - 1
+            else
+                droplets.cell_id[i] -= 1
+            end
+        elseif droplets.x_loc_in_cell[i] > spatial_settings.x_grid_width
+            if rem(droplets.cell_id[i], spatial_settings.Nx) == 0
+                droplets.cell_id[i] -= (spatial_settings.Nx - 1)
+            else
+                droplets.cell_id[i] += 1
+            end
+        end
+    end
 end
