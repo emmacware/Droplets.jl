@@ -1,7 +1,7 @@
 #---------------------------------------------------------
 # SAMPLING
 #---------------------------------------------------------
-export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse
+export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse, init_spatial_uniformvol_dry_sd
 
 """
     init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
@@ -178,3 +178,35 @@ function init_monodisperse(settings::coag_settings{FT})where FT<:AbstractFloat
     return droplets
 end
 
+
+function init_spatial_uniformvol_dry_sd(rad_dist,settings::coag_settings{FT},
+    spatial::spatial_settings{FT})where FT<:AbstractFloat
+
+    Ns = settings.Ns
+    ΔV = settings.ΔV
+    n0 = settings.n0
+
+    percentile_limit = [0.001, 0.999]  
+    Rmin = cdf(rad_dist, percentile_limit[1])
+    Rmax = cdf(rad_dist, percentile_limit[2])   
+
+    Rarray = range(Rmin, Rmax, length=Ns+1)
+    cdf_values = cdf.(dist, Rarray)
+    rad = (Rarray[2:end] .+ Rarray[1:end-1])./ 2 
+    cdf_values = cdf_values[2:end] - cdf_values[1:end-1]
+    multiplicities = cdf_values .* (n0 * ΔV)
+                    
+    ξstart::Vector{Int} = floor.(multiplicities .+ 0.5)
+    z_loc_in_cell = rand(Uniform(0, 1), Ns)
+    x_loc_in_cell = rand(Uniform(0, 1), Ns)
+    cell_id = rand(1:spatial.num_grids, Ns)
+
+    dry_r3 = rad.^3
+
+    #set to activation radius
+    r_crit = sqrt(3 * B / A)/ 2
+    volumes = 4* pi / 3 .*dry_r3
+
+    droplets = droplet_attributes_2d{FT}(ξstart, volumes,dry_r3,z_loc_in_cell, x_loc_in_cell, cell_id)
+    return droplets
+end

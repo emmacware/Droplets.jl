@@ -5,6 +5,7 @@
 export esat,sat,drdtcondensation1,drdtcondensation2,drdtcondensation3#,condense_and_calc_Sv!
 export FK,FD,drkohler,θcondenseupdate!,qvcondenseupdate!,dXkohler_function_of_radius
 export dXkohler_function_of_radius_activated,drkohler_activated
+export set_X_crit!
 
 # FK(T),            returns FK in the Köhler equation
 # FD(T),            returns FD in the Köhler equation
@@ -50,6 +51,9 @@ function FD(T)
     Fd = constants.ρl*constants.Rv .*(T)./(constants.Dv .* esat(T))
     return Fd
 end
+
+akk(T) = 3.3 * 10^(-7) / T #(m K/T)
+bkk(m) = 4.3 * 2 / m / 1e6 #m^3 for NaCL
 
 ######################################################################
 # Saturation Functions
@@ -113,27 +117,22 @@ RHS of the Köhler equation.
 - `dr`: Change in droplet radius over the timestep (m)
 """
 function drkohler(R, M, m, T, qv, P, timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
-    b = 4.3 * 2 ./ m ./ 1e6 #m^3 for NaCL
     S = sat.(qv, P) ./ esat(T)
     denom = (FK(T) + FD(T))
-    dr = (S - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (S - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function drkohler(R, M, m, T, Senv, timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
-    b = 4.3 * 2 ./ m ./ 1e6 #m^3 for NaCL
     denom = (FK(T) + FD(T))
-    dr = (Senv - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (Senv - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function drkappakohler(R,dry_r3,kappa,Senv,timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
     b = kappa * dry_r3
     denom = (FK(T) + FD(T))
-    dr = (Senv - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
@@ -298,3 +297,10 @@ end
 #     return qvarray,ρ
 # end
 
+function set_X_crit!(droplets,i,kappa,T)
+    # Set the critical volume for condensation
+    b = kappa * droplets.dry_r3[i]
+    a = akk(T)
+    R_crit = sqrt(3 * b / a) / 2
+    droplets.X[i] = radius_to_volume(R_crit)  # Convert radius to volume
+end
