@@ -42,6 +42,7 @@ droplet_attributes{FT} where {FT<:AbstractFloat}
 Create a new instance of simple_droplet_attributes with the given attribute vectors.
 """
 droplet_attributes{FT}(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat} = simple_droplet_attributes{FT}(ξ, X)
+droplet_attributes(ξ::Vector{Int}, X::Vector{FT}) where {FT<:AbstractFloat} = simple_droplet_attributes{FT}(ξ, X)
 droplet_attributes{FT}(ξ::SVector{NSD,FT}, X::SVector{NSD,FT}) where {FT<:AbstractFloat, NSD} = static_droplet_attributes{FT, NSD}(ξ, X)
 droplet_attributes_1d{FT}(ξ::Vector{Int}, X::Vector{FT}, dry_mass::Vector{FT}, z_loc::Vector{FT}) where {FT<:AbstractFloat} = droplet_attributes_1d{FT}(ξ, X, dry_mass, z_loc)
 droplet_attributes_2d{FT}(ξ::Vector{Int}, X::Vector{FT}, dry_mass::Vector{FT}, z_loc::Vector{FT}, x_loc::Vector{FT}) where {FT<:AbstractFloat} = droplet_attributes_2d{FT}(ξ, X, dry_mass, z_loc, x_loc)

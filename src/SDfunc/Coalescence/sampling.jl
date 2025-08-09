@@ -2,6 +2,7 @@
 # SAMPLING
 #---------------------------------------------------------
 export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse, init_spatial_uniformvol_dry_sd
+export alpha_sampling
 
 """
     init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
@@ -210,3 +211,35 @@ function init_spatial_uniformvol_dry_sd(rad_dist,settings::coag_settings{FT},
     droplets = droplet_attributes_2d{FT}(ξstart, volumes,dry_r3,z_loc_in_cell, x_loc_in_cell, cell_id)
     return droplets
 end
+
+function alpha_sampling(dist,alpha,settings::coag_settings{FT}) where FT<:AbstractFloat
+    Ns = settings.Ns
+    # ΔV = settings.ΔV
+    # n0 = settings.n0
+
+    percentile_limit = [0.001, 0.999]  
+    Xmin = quantile(dist, percentile_limit[1])
+    Xmax = quantile(dist, percentile_limit[2])   
+    x_prime = range(Xmin, Xmax, length=Ns+1)
+
+
+    sd_cdf = Distributions.cdf.(dist, x_prime)
+
+    Fb2_inv(y) = (Xmax - Xmin) * y
+
+    x_sd_cdf = (1 - alpha) * x_prime + alpha * Fb2_inv(sd_cdf)
+
+    inv_cdf = linear_interpolation(sd_cdf, x_sd_cdf,extrapolation_bc=Line())
+    percent_values = range(percentile_limit[1], percentile_limit[2], length=2 * Ns + 1)
+    percentiles = inv_cdf(percent_values)
+
+    x = percentiles[2:2:end]
+    cdf = Distributions.cdf(dist,percentiles[1:2:end])
+    y_float = diff(cdf)
+    multiplicities = y_float * (settings.n0 * settings.ΔV)
+    ξstart::Vector{Int} = floor.(multiplicities .+ 0.5)
+
+    droplets = droplet_attributes{FT}(ξstart, x)
+    return droplets
+end
+
