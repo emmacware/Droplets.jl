@@ -113,7 +113,7 @@ Perform the SDM coalescence update for the superdroplets. Update the droplet att
 function test_pairs!(scheme::Serial,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
     
     coag_data.lowest_zero[] = false
-    for α::Int in 1:eachindex(L)
+    for α::Int in eachindex(L)
             
         if coag_data.ϕ[α] >= coag_data.pαdt[α]
             continue
@@ -128,7 +128,7 @@ end
 function test_pairs!(scheme::Parallel,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
     
     coag_data.lowest_zero[] = false
-    Threads.@threads for α in 1:eachindex(L)
+    Threads.@threads for α in eachindex(L)
         if coag_data.ϕ[α] >= coag_data.pαdt[α]
             continue
         end

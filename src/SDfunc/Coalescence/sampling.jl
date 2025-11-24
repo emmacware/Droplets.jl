@@ -23,7 +23,7 @@ function init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
     X0 = radius_to_volume(R0)# initial volume m3    
     Xstart::Vector{FT} = (rand(Exponential(X0), Ns))
 
-    droplets = droplet_attributes(ξstart, Xstart)
+    droplets = droplet_attributes{FT}(ξstart, Xstart)
     return droplets
 end
 
@@ -88,7 +88,7 @@ function init_logarithmic(settings::coag_settings{FT})where FT<:AbstractFloat
     multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
     ξstart::Vector{Int} = floor.(multiplicities.+0.5)
 
-    droplets = droplet_attributes(ξstart, volumes)
+    droplets = droplet_attributes{FT}(ξstart, volumes)
     return droplets
 end
 
@@ -153,7 +153,7 @@ function init_uniform_sd(settings::coag_settings{FT})where FT<:AbstractFloat
     multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
     ξstart::Vector{Int} = floor.(multiplicities.+0.5)
 
-    droplets = droplet_attributes(ξstart, volumes)
+    droplets = droplet_attributes{FT}(ξstart, volumes)
     return droplets
 end
 
@@ -174,7 +174,7 @@ function init_monodisperse(settings::coag_settings{FT})where FT<:AbstractFloat
     ξstart::Vector{Int} = (div(n0*ΔV,Ns)*ones(Ns))
     Xstart::Vector{FT} = radius_to_volume(R0).*ones(Ns)
 
-    droplets = droplet_attributes(ξstart,Xstart)
+    droplets = droplet_attributes{FT}(ξstart,Xstart)
     return droplets
 end
 

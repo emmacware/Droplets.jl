@@ -15,7 +15,7 @@ function coag_runtime(randseed::Int,droplets::droplet_attributes,
             # if i,seconds in enumerate(run_settings.output_steps)
             
             if i !=1
-                timestepper = (run_settings.output_steps[i]-run_settings.output_steps[i-1])/coag_settings.Δt
+                timestepper = Int(round((run_settings.output_steps[i]-run_settings.output_steps[i-1])/coag_settings.Δt))
                 ctime::FT = @CPUelapsed begin
                     for _ in 1:timestepper
                         coalescence_timestep!(threading,scheme,droplets,coag_data,coag_settings)
