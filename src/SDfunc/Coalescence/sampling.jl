@@ -2,6 +2,7 @@
 # SAMPLING
 #---------------------------------------------------------
 export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse, init_spatial_uniformvol_dry_sd
+export init_logarithmic_deterministic, init_uniform_deterministic
 
 """
     init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
@@ -91,6 +92,54 @@ function init_logarithmic(settings::coag_settings{FT})where FT<:AbstractFloat
     droplets = droplet_attributes{FT}(ξstart, volumes)
     return droplets
 end
+
+function init_logarithmic_deterministic(settings::coag_settings{FT})where FT<:AbstractFloat
+    Ns = settings.Ns
+    ΔV = settings.ΔV
+    n0 = settings.n0
+    R0 = settings.R0
+    R_min = settings.R_min
+    R_max = settings.R_max
+
+    X0 = radius_to_volume(R0)
+    exp_dist = Exponential(X0)
+
+    radius_bins_new = 10 .^ range(log10(R_min), log10(R_max), length=2*Ns+1)
+    sd_radii::Vector{FT} = radius_bins_new[2:2:end-1]
+    volumes::Vector{FT} = radius_to_volume.(sd_radii)
+    pdf_values = pdf.(exp_dist, volumes)
+    bin_widths_new = diff(radius_bins_new[1:2:end])
+    dvdr = 4 * π .* sd_radii.^2
+    multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
+    ξstart::Vector{Int} = floor.(multiplicities.+0.5)
+
+    droplets = droplet_attributes{FT}(ξstart, volumes)
+    return droplets
+end
+
+function init_uniform_deterministic(settings::coag_settings{FT})where FT<:AbstractFloat
+        Ns = settings.Ns
+        ΔV = settings.ΔV
+        n0 = settings.n0
+        R0 = settings.R0
+        R_min = settings.R_min
+        R_max = settings.R_max
+    
+        X0 = radius_to_volume(R0)
+        exp_dist = Exponential(X0)
+    
+        radius_bins_new = range(R_min, R_max, length=2Ns+1)
+        sd_radii::Vector{FT} = radius_bins_new[2:2:end-1]
+        volumes::Vector{FT} = radius_to_volume.(sd_radii)
+        pdf_values = pdf.(exp_dist, volumes)
+        bin_widths_new = diff(radius_bins_new[1:2:end])
+        dvdr = 4 * π .* sd_radii.^2
+        multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
+        ξstart::Vector{Int} = floor.(multiplicities.+0.5)
+    
+        droplets = droplet_attributes{FT}(ξstart, volumes)
+        return droplets
+    end
 
 """
 init_uniform_sd(settings::coag_settings{FT}) where FT<:AbstractFloat
