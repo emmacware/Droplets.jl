@@ -5,6 +5,7 @@ using Droplets
 using CPUTime
 using ComponentArrays
 import OrdinaryDiffEq as ODE
+using DiffEqCallbacks
 
 FT = Float64
 
@@ -24,12 +25,13 @@ dt = FT(0.25)
 X0 = (4/3)*π*R0^3  # initial volume in m^3
 coagsettings = coag_settings{FT}(
     Ns=2^13,
-    Δt=dt,
+    Δt=1.0,
     ΔV=1,
     n0=LWC/(X0*constants.ρl),
     R0=R0,
     R_min=1e-6,
     R_max=100e-6,
+    kernel=golovin,
 )
 
 init_method = init_logarithmic_deterministic
@@ -90,19 +92,39 @@ function parcel_model_radiative(dY, Y_CompVec, params, t)
     dY.ξ .= 0
 end
 
-condition(u, t, integrator) = minimum(u.r2)   # triggers exactly at r2=0
+condition(u, t, integrator) = max(0,minimum(u.r2))   # triggers exactly at r2=0
 affect!(integrator) = @. integrator.u.r2 = max(integrator.u.r2, 0)
 cb = ODE.ContinuousCallback(condition, affect!)
 
 
-num_bins = 300
-radius_bins_edges = 10 .^ range(log10(1*1e-6), log10(100*1e-6), length=num_bins+1) 
+num_bins = 100
+radius_bins_edges = 10 .^ range(log10(1*1e-6), log10(10000*1e-6), length=num_bins+1) 
 runsettings=run_settings{FT}(
     num_bins = num_bins,
     radius_bins_edges = radius_bins_edges,
     smooth = true,
     binning_method = binning_method,
 )
+threading,scheme = runsettings.coag_threading, runsettings.scheme
+coag_data = coagulation_run{FT}(coagsettings.Ns)
+
+# create a discrete callback for collision/coalescence every coagsettings.Δt
+# coag_condition(u, t, integrator) = t - integrator.tprev - coagsettings.Δt
+function coag_affect!(integrator)
+    ξ = Int.(round.(collect(integrator.u.ξ)))
+    r2 = collect(integrator.u.r2)
+    X = radius_to_volume.(sqrt.(r2))
+    drops = droplet_attributes{FT}(ξ,X)
+    coalescence_timestep!(threading,scheme,drops,coag_data,coagsettings)
+    r2_new = (volume_to_radius.(drops.X)).^2
+    integrator.u.r2 .= r2_new
+    integrator.u.ξ .= drops.ξ
+end
+coag_cb = PeriodicCallback(coag_affect!, coagsettings.Δt)
+callbacks = ODE.CallbackSet(cb, coag_cb)
+
+
+
 
 solutions = Dict()
 for η_z in [0.7,0.8, 0.9,1.1]
@@ -111,7 +133,7 @@ for η_z in [0.7,0.8, 0.9,1.1]
         η=η(η_z),ε_r=ε_r,Fs=Fs,ε_0=ε_0)
     problem = ODE.ODEProblem(parcel_model_radiative, d_Y_init, (FT(0), FT(3600)), params)
     sol = ODE.solve(problem, ODE.Euler(),
-    callback=cb,
+    callback=cb,#callbacks,
     dt=dt,
     reltol = 100 * eps(FT),
     abstol = 100 * eps(FT),

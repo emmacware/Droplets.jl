@@ -10,12 +10,17 @@ struct mpdata_settings
     grid::Tuple{Int, Int}
     horizontal_boundary_condition::Union{Periodic, NoFlux}
     vertical_boundary_condition::Union{Periodic, NoFlux}
+    nonoscillatory::Bool
+    infinite_gauge::Bool
 
     function mpdata_settings(grid::Tuple{Int,Int};
                              n_corr=2,
                              horizontal_boundary_condition::BoundaryCondition=Periodic(),
-                             vertical_boundary_condition::BoundaryCondition=Periodic())
-        new(n_corr, grid, horizontal_boundary_condition, vertical_boundary_condition)
+                             vertical_boundary_condition::BoundaryCondition=Periodic(),
+                             nonoscillatory::Bool=false,
+                             infinite_gauge::Bool=false)
+        new(n_corr, grid, horizontal_boundary_condition, vertical_boundary_condition,
+            nonoscillatory, infinite_gauge)
     end
 end
 
@@ -25,10 +30,12 @@ struct mpdata_tmp
     GCy_step::Matrix{Float64}
     GCx_tmp::Matrix{Float64}
     GCy_tmp::Matrix{Float64}
+    minmax::@NamedTuple{localmin::Matrix{Float64}, localmax::Matrix{Float64}}
 
     function mpdata_tmp(ϕ, GCx_step, GCy_step)
+        minmax = (localmin=zeros(size(ϕ)), localmax=zeros(size(ϕ)))
         new(zeros(size(ϕ)), zeros(size(GCx_step)), zeros(size(GCy_step)), 
-            zeros(size(GCx_step)), zeros(size(GCy_step)))
+            zeros(size(GCx_step)), zeros(size(GCy_step)),minmax)
     end
 end
 
