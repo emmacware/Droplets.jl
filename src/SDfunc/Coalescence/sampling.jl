@@ -1,7 +1,8 @@
 #---------------------------------------------------------
 # SAMPLING
 #---------------------------------------------------------
-export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse
+export init_ξ_const,init_logarithmic,init_uniform_sd, init_monodisperse, init_spatial_uniformvol_dry_sd
+export init_logarithmic_deterministic, init_uniform_deterministic
 
 """
     init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
@@ -23,7 +24,7 @@ function init_ξ_const(settings::coag_settings{FT}) where FT<:AbstractFloat
     X0 = radius_to_volume(R0)# initial volume m3    
     Xstart::Vector{FT} = (rand(Exponential(X0), Ns))
 
-    droplets = droplet_attributes(ξstart, Xstart)
+    droplets = droplet_attributes{FT}(ξstart, Xstart)
     return droplets
 end
 
@@ -88,9 +89,57 @@ function init_logarithmic(settings::coag_settings{FT})where FT<:AbstractFloat
     multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
     ξstart::Vector{Int} = floor.(multiplicities.+0.5)
 
-    droplets = droplet_attributes(ξstart, volumes)
+    droplets = droplet_attributes{FT}(ξstart, volumes)
     return droplets
 end
+
+function init_logarithmic_deterministic(settings::coag_settings{FT})where FT<:AbstractFloat
+    Ns = settings.Ns
+    ΔV = settings.ΔV
+    n0 = settings.n0
+    R0 = settings.R0
+    R_min = settings.R_min
+    R_max = settings.R_max
+
+    X0 = radius_to_volume(R0)
+    exp_dist = Exponential(X0)
+
+    radius_bins_new = 10 .^ range(log10(R_min), log10(R_max), length=2*Ns+1)
+    sd_radii::Vector{FT} = radius_bins_new[2:2:end-1]
+    volumes::Vector{FT} = radius_to_volume.(sd_radii)
+    pdf_values = pdf.(exp_dist, volumes)
+    bin_widths_new = diff(radius_bins_new[1:2:end])
+    dvdr = 4 * π .* sd_radii.^2
+    multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
+    ξstart::Vector{Int} = floor.(multiplicities.+0.5)
+
+    droplets = droplet_attributes{FT}(ξstart, volumes)
+    return droplets
+end
+
+function init_uniform_deterministic(settings::coag_settings{FT})where FT<:AbstractFloat
+        Ns = settings.Ns
+        ΔV = settings.ΔV
+        n0 = settings.n0
+        R0 = settings.R0
+        R_min = settings.R_min
+        R_max = settings.R_max
+    
+        X0 = radius_to_volume(R0)
+        exp_dist = Exponential(X0)
+    
+        radius_bins_new = range(R_min, R_max, length=2Ns+1)
+        sd_radii::Vector{FT} = radius_bins_new[2:2:end-1]
+        volumes::Vector{FT} = radius_to_volume.(sd_radii)
+        pdf_values = pdf.(exp_dist, volumes)
+        bin_widths_new = diff(radius_bins_new[1:2:end])
+        dvdr = 4 * π .* sd_radii.^2
+        multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
+        ξstart::Vector{Int} = floor.(multiplicities.+0.5)
+    
+        droplets = droplet_attributes{FT}(ξstart, volumes)
+        return droplets
+    end
 
 """
 init_uniform_sd(settings::coag_settings{FT}) where FT<:AbstractFloat
@@ -153,7 +202,7 @@ function init_uniform_sd(settings::coag_settings{FT})where FT<:AbstractFloat
     multiplicities = pdf_values .* bin_widths_new .* dvdr * (n0*ΔV)
     ξstart::Vector{Int} = floor.(multiplicities.+0.5)
 
-    droplets = droplet_attributes(ξstart, volumes)
+    droplets = droplet_attributes{FT}(ξstart, volumes)
     return droplets
 end
 
@@ -174,7 +223,39 @@ function init_monodisperse(settings::coag_settings{FT})where FT<:AbstractFloat
     ξstart::Vector{Int} = (div(n0*ΔV,Ns)*ones(Ns))
     Xstart::Vector{FT} = radius_to_volume(R0).*ones(Ns)
 
-    droplets = droplet_attributes(ξstart,Xstart)
+    droplets = droplet_attributes{FT}(ξstart,Xstart)
     return droplets
 end
 
+
+function init_spatial_uniformvol_dry_sd(rad_dist,settings::coag_settings{FT},
+    spatial::spatial_settings{FT})where FT<:AbstractFloat
+
+    Ns = settings.Ns
+    ΔV = settings.ΔV
+    n0 = settings.n0
+
+    percentile_limit = [0.001, 0.999]  
+    Rmin = cdf(rad_dist, percentile_limit[1])
+    Rmax = cdf(rad_dist, percentile_limit[2])   
+
+    Rarray = range(Rmin, Rmax, length=Ns+1)
+    cdf_values = cdf.(dist, Rarray)
+    rad = (Rarray[2:end] .+ Rarray[1:end-1])./ 2 
+    cdf_values = cdf_values[2:end] - cdf_values[1:end-1]
+    multiplicities = cdf_values .* (n0 * ΔV)
+                    
+    ξstart::Vector{Int} = floor.(multiplicities .+ 0.5)
+    z_loc_in_cell = rand(Uniform(0, 1), Ns)
+    x_loc_in_cell = rand(Uniform(0, 1), Ns)
+    cell_id = rand(1:spatial.num_grids, Ns)
+
+    dry_r3 = rad.^3
+
+    #set to activation radius
+    r_crit = sqrt(3 * B / A)/ 2
+    volumes = 4* pi / 3 .*dry_r3
+
+    droplets = droplet_attributes_2d{FT}(ξstart, volumes,dry_r3,z_loc_in_cell, x_loc_in_cell, cell_id)
+    return droplets
+end

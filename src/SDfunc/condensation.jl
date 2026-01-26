@@ -5,6 +5,8 @@
 export esat,sat,drdtcondensation1,drdtcondensation2,drdtcondensation3#,condense_and_calc_Sv!
 export FK,FD,drkohler,θcondenseupdate!,qvcondenseupdate!,dXkohler_function_of_radius
 export dXkohler_function_of_radius_activated,drkohler_activated
+export set_X_crit!
+export dM_dt
 
 # FK(T),            returns FK in the Köhler equation
 # FD(T),            returns FD in the Köhler equation
@@ -50,6 +52,9 @@ function FD(T)
     Fd = constants.ρl*constants.Rv .*(T)./(constants.Dv .* esat(T))
     return Fd
 end
+
+akk(T) = 3.3 * 10^(-7) / T #(m K/T)
+bkk(m) = 4.3 * 2 / m / 1e6 #m^3 for NaCL
 
 ######################################################################
 # Saturation Functions
@@ -113,27 +118,22 @@ RHS of the Köhler equation.
 - `dr`: Change in droplet radius over the timestep (m)
 """
 function drkohler(R, M, m, T, qv, P, timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
-    b = 4.3 * 2 ./ m ./ 1e6 #m^3 for NaCL
     S = sat.(qv, P) ./ esat(T)
     denom = (FK(T) + FD(T))
-    dr = (S - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (S - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function drkohler(R, M, m, T, Senv, timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
-    b = 4.3 * 2 ./ m ./ 1e6 #m^3 for NaCL
     denom = (FK(T) + FD(T))
-    dr = (Senv - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (Senv - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function drkappakohler(R,dry_r3,kappa,Senv,timestep)
-    a = 3.3 * 10^(-7) / T #(m K/T)
     b = kappa * dry_r3
     denom = (FK(T) + FD(T))
-    dr = (Senv - 1 .- (a ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
@@ -227,6 +227,105 @@ function dXkohler_function_of_radius_activated(R, T, Senv, timestep)
     return dX
 end
 
+# function FK_vent(T) #does k contain these already?
+#     Fk = (constants.L ./(constants.Rv.*T) .-1).*(constants.L*constants.ρl)./(constants.k .*T)
+#     return Fk/(Fa*Fq)
+# end
+
+K(T) = (2.38+0.00703(T −constants.T0))*1e-2
+const β_diff = 0.04
+β(T) = β_diff * exp(-(T-constants.T0)/85)
+const α_diff = 0.7
+D(T,p) = 2.11e−5 * (T/constants.T0)*1.94*(constants.P0/p)
+
+function F_α(R,T,ρ_air,Re,K_th)
+    l_q = (2π/(constants.Rd*T))^0.5*K(T)*f_q(Re,ρ_air,T)/(ρ_air*constants.Cp_air*2*α_diff*(2-α_diff)^(-1))
+    # l_q = K_th * f_q(Re,ρ_air,T) / (ρ_air*constants.Cp_air*1/4 * α_diff* (8*(constants.Rd*T/pi))^0.5)
+    return R/(R+ l_q)
+end
+
+function F_β(R,T,ρ_air,P,Dv,Re)
+    l_m =  (2π/(constants.Rv*T))^0.5 * Dv * f_m(Re,ρ_air,T,P)/(2*β(T)*(2-β(T))^(-1))
+    return R/(R + l_m)
+end
+
+function fvmol(Re,ScPr)
+    re_half_scpr_third = Re^0.5 * ScPr^(1/3)
+    if re_half_scpr_third < 1.4
+        # fvmol = 1+0.108*(re_half_scpr_third^2)
+        fvmol = 1+0.14*(re_half_scpr_third^2)
+    else
+        # fvmol = 0.78 + 0.308*re_half_scpr_third
+        fvmol = 0.86 + 0.28*re_half_scpr_third
+    end
+    return fvmol
+end
+
+
+function Sc(ρ_air,T,P)
+    return η_air(T,ρ_air)/(ρ_air*D(T,P))
+end
+
+function Pr(ρ_air,T)
+    return η_air(T,ρ_air)*constants.Cp_air/K(T)
+end
+f_m(Re_,ρ_air,T,P) = fvmol(Re_,Sc(ρ_air,T,P))
+f_q(Re_,ρ_air,T) = fvmol(Re_,Pr(ρ_air,T))
+
+function Reynoldsnumber(R,ρ_air,T)
+    return 2*R*ρ_air*v_term(R)/η_air(T,ρ_air)
+end
+
+function η_air(T,ρ_air) #kinematic viscosity of air
+    μ = constants.μ*(T/296.16)^1.5 * (T + 120)/(T+296.16) #Hall and Pruppracher 1976 term index
+    return μ
+end
+
+function C_drag(Re_)
+    return 24*(1 + 0.15*Re_^0.687)/Re_ + 0.42/(1 + 42500*Re_^(-1.16))
+end
+
+# function terminal_vel(R,ρ_air) #nonlinear dependance on Re
+#     ρl = constants.ρl
+#     cd = C_drag(Re(R,ρ_air))
+#     g = constants.g
+#     return sqrt(8*R*(ρl-ρ_air)*g/(3*cd*ρ_air))
+# end
+
+function v_term(radius)
+    if radius < 30e-6
+        vt = 1.19e6 * radius^2
+    elseif radius < 60e-6
+        vt = 8e3 * radius
+    elseif radius < 2e-3
+        vt = 2.01e3 * radius^0.5
+    else
+        vt = 2.01e3 * 2e-3^0.5
+    end 
+    return vt
+end
+
+function dM_dt(R,T,Senv,p_air,ρ_air,η,ε_r,Fs,ε_0)
+    Dv = D(T,p_air)
+    Re_ = Reynoldsnumber(R,ρ_air,T)
+    K_th = K(T)
+    Fafq = F_α(R,T,ρ_air,Re_,K_th)*f_q(Re_,ρ_air,T)
+    Fbfm = F_β(R,T,ρ_air,p_air,Dv,Re_)*f_m(Re_,ρ_air,T,p_air)
+
+    lvrtm1 = (constants.L/(constants.Rv*T)) - 1
+    term2 = 1 - η*ε_r - Fs/(ε_0*constants.σSB*T^4)
+    term3 = R*(ε_0*constants.σSB*T^3)/(K_th*Fafq)
+
+    Hwc = 1 - lvrtm1*term2*term3
+    Aw = lvrtm1 * constants.L/(Fafq*K_th*T)
+    Bw = constants.Rv*T/(Dv*esat(T)*Fbfm)
+
+    HAB = Hwc*Aw +Bw
+    dm_term = 4pi*R*(Senv - 1)/HAB
+    dm_rad_term = term2*lvrtm1 * 4pi*R^2*ε_0*constants.σSB*T^3/(K_th*Fafq*HAB)
+
+    return dm_term + dm_rad_term
+end
 
 
 """
@@ -298,3 +397,10 @@ end
 #     return qvarray,ρ
 # end
 
+function set_X_crit!(droplets,i,kappa,T)
+    # Set the critical volume for condensation
+    b = kappa * droplets.dry_r3[i]
+    a = akk(T)
+    R_crit = sqrt(3 * b / a) / 2
+    droplets.X[i] = radius_to_volume(R_crit)  # Convert radius to volume
+end
