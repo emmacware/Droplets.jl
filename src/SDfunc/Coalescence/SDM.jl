@@ -184,6 +184,40 @@ function sdm_update!(pair::Tuple{Int,Int},α::Int, droplets::droplet_attributes{
     return nothing
 end
 
+function sdm_update!(pair::Tuple{Int,Int},α::Int, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run) where FT<:AbstractFloat
+
+    j,k = pair
+    if droplets.ξ[j] < droplets.ξ[k]
+        j,k = k,j
+    end
+
+    ξj, ξk = droplets.ξ[j], droplets.ξ[k]
+    pα =  coag_data.pαdt[α]
+
+    pα_floor::FT = @fastmath floor(pα)
+    γ::FT  = coag_data.ϕ[α] < pα - pα_floor ? pα_floor +1 : pα_floor
+
+    if γ >= (floor_ξj_div_ξk = floor(ξj / ξk))
+        coag_data.deficit[α] += (γ - floor_ξj_div_ξk) * ξk
+        γ = floor_ξj_div_ξk
+    end
+
+    if ξj > γ * ξk
+        droplets.ξ[j] -= γ * ξk
+        droplets.X[k] = γ * droplets.X[j] + droplets.X[k]
+    else
+        droplets.ξ[j] = floor(ξk / 2)
+        droplets.ξ[k] -= droplets.ξ[j]
+        droplets.X[k] = droplets.X[j] = γ *droplets.X[j] + droplets.X[k]
+
+        if droplets.ξ[j] == 0
+            coag_data.lowest_zero[] = true
+        end
+    end
+    return nothing
+end
+
+
 """
     split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
 Split the superdroplet with the highest multiplicity into two equal parts, as proposed by

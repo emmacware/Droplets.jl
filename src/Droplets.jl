@@ -10,5 +10,7 @@ include(joinpath("SDfunc", "updateposition.jl"))
 include(joinpath("SDfunc", "MPDATA", "mpdata.jl"))
 include(joinpath("SDfunc", "density.jl"))
 include(joinpath("SDfunc", "binning.jl"))
+include(joinpath("SDfunc","SCM","single_column.jl"))
+include(joinpath("SDfunc","Thermodynamics","conversions.jl"))
 
 end

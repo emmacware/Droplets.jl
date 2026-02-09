@@ -7,6 +7,8 @@ export FK,FD,drkohler,θcondenseupdate!,qvcondenseupdate!,dXkohler_function_of_r
 export dXkohler_function_of_radius_activated,drkohler_activated
 export set_X_crit!
 export dM_dt
+export drkappakohler
+export v_term
 
 # FK(T),            returns FK in the Köhler equation
 # FD(T),            returns FD in the Köhler equation
@@ -130,8 +132,9 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,Senv,timestep)
+function drkappakohler(R,dry_r3,kappa,T,Senv,timestep)
     b = kappa * dry_r3
+    M = 4/3 * π * dry_r3 * 1.78e3 #kg/m3 # hardcoded for dycoms right now CHANGE
     denom = (FK(T) + FD(T))
     dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep

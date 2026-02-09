@@ -37,11 +37,14 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     gconst = FT(9.8)    # gravitational constant, m/s2
     L = FT(22.6e5)         # Latent Heat of Vaporization J/kg
     Cp_water = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
+    Cp_vapor = FT(1859)     # ClimaParams "isobaric_specific_heat_vapor"
     Cp_air = FT(1005)
     σSB = FT(5.670374419e-8) # Stefan-Boltzmann constant W⋅m−2⋅K−4
     T0 = FT(273.15)       # reference temperature K
-    P0 = FT(101325.0)     # reference pressure Pa
+    P0 = FT(100000.0)     # reference pressure Pa for potential temperature
+    P_SLP = FT(101325.0)     # standard sea level pressure Pa
     # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
+    ϵ = FT(1.6080793637401138)           # molar mass ratio air and vapor
 end
 
 const constants = Constants{Float32}()

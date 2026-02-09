@@ -25,15 +25,27 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp; hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
     tmp.ϕ .= 0
 
-    flux_horizontal!(ϕ,tmp.ϕ,tmp.GCx_step,bc=hbc,infinite_gauge=infinite_gauge)
-    flux_vertical!(ϕ,tmp.ϕ,tmp.GCy_step, bc=vbc,infinite_gauge=infinite_gauge)
+    nz = length(ϕ)
+    for k in 1:nz
+        kp,km = limit(vbc,k+1, nz), limit(vbc,k-1, nz)
+        tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
+        tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+    end
 
     ϕ .+= tmp.ϕ
 end
 
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp; hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
+    tmp.ϕ .= 0
+    
+    flux_horizontal!(ϕ,tmp.ϕ,tmp.GCx_step, bc=vbc,infinite_gauge=infinite_gauge)
+    flux_vertical!(ϕ,tmp.ϕ,tmp.GCy_step, bc=vbc,infinite_gauge=infinite_gauge)
+
+    ϕ .+= tmp.ϕ
+end
 
 
 function u_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20,hbc::BoundaryCondition=Periodic(),vbc::BoundaryCondition=Periodic())
@@ -98,6 +110,25 @@ function v_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryCondi
 
     if vbc isa Periodic
         tmp.GCy_tmp[:,1] .= tmp.GCy_tmp[:,end]
+    end
+end
+
+function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryCondition=Periodic())
+    GCz_inside = tmp.GCz_step .+ 0
+    nz = length(ϕ)
+
+    for k in 1:nz
+
+        kp = limit(vbc,k + 1, nz)
+
+        B_num =(ϕ[kp] - ϕ[k])
+        B_den = settings.infinite_gauge ? 2 : (ϕ[kp] + ϕ[k] + ϕ_eps)
+        B = B_num / B_den
+
+        tmp.GCz_tmp[kp] = abs(GCz_inside[kp])*(1 - abs(GCz_inside[kp])) * B 
+    end
+    if vbc isa Periodic
+        tmp.GCz_tmp[1] = tmp.GCz_tmp[end]
     end
 end
 
@@ -222,7 +253,7 @@ function antiosc!(ϕ,tmp,settings; hbc::BoundaryCondition=Periodic(), vbc::Bound
     tmp.GCy_step .= tmp.GCy_tmp
 end
 
-function compute_antidiffusive_velocity!(ϕ, tmp,settings; f = 0.5,hbc::BoundaryCondition = Periodic(), vbc::BoundaryCondition = Periodic())
+function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp,settings; f = 0.5,hbc::BoundaryCondition = Periodic(), vbc::BoundaryCondition = Periodic())
 
     tmp.GCx_tmp .= 0
     tmp.GCy_tmp .= 0  
@@ -232,6 +263,15 @@ function compute_antidiffusive_velocity!(ϕ, tmp,settings; f = 0.5,hbc::Boundary
 
     tmp.GCx_step .= tmp.GCx_tmp
     tmp.GCy_step .= tmp.GCy_tmp
+end
+
+function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp_1d,settings; f = 0.5,vbc::BoundaryCondition = Periodic())
+
+    tmp.GCz_tmp .= 0
+
+    corrective_vel_1d(ϕ,tmp,settings,f=f,vbc=vbc)
+
+    tmp.GCz_step .= tmp.GCz_tmp
 end
 
 function find_extrema!(ϕ,tmp;hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic())
@@ -296,3 +336,25 @@ end
 # function avg_v(v)
 #     @views 0.5 .* (v[:, 1:end-1] .+ v[:, 2:end])
 # end
+
+function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5) 
+    n_corr = settings.n_corr
+    vbc::BoundaryCondition = settings.vertical_boundary_condition
+
+    tmp.GCz_step .= GCz.+0
+    # find_extrema!(ϕ_stage,tmp)
+
+    donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false)
+
+
+    for _ in 2:n_corr
+        compute_antidiffusive_velocity!(ϕ_stage,tmp,settings,f=f, vbc=vbc)
+        if settings.nonoscillatory
+            antiosc!(ϕ_stage,tmp,settings,vbc=vbc)
+            # find_extrema!(ϕ_stage,tmp)
+        end
+
+        donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge)
+
+    end
+end
