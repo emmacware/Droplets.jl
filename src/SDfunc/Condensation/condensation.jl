@@ -115,7 +115,7 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,ρ_solute, timestep)
     M = 4/3 * π * dry_r3 * ρ_solute
     denom = (FK(T) + FD(T))
     dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
-    return dr #R + dr * timestep > 0 ? dr : -R / timestep
+    return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 
