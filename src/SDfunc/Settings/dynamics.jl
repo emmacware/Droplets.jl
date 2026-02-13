@@ -38,5 +38,6 @@ Base.@kwdef struct condensation_settings{FT<:AbstractFloat}
     Δt::FT = FT(1.0) 
     activated::Bool = true # kohler or activated kohler
     kappa::FT = FT(0.0) # hygroscopicity parameter
+    ρ_solute::FT = FT(1.78e3) # default Dycoms
 
 end

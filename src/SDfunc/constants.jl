@@ -3,7 +3,7 @@
 ##################################################
 
 export Constants,constants
-export kg_to_g, m_to_μm, volume_to_radius, radius_to_volume
+export kg_to_g, m_to_μm, volume_to_radius, radius_to_volume, ccm_to_cm
 
 """
     Constants{FT<:AbstractFloat}
@@ -52,6 +52,7 @@ const constants = Constants{Float32}()
 #Conversions
 const kg_to_g = 1e3
 const m_to_μm = 1e6
+const ccm_to_cm = 1e6 # conversion from cm^-3 to m^-3
 
 """
     volume_to_radius(V::AbstractFloat)

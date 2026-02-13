@@ -1,5 +1,5 @@
 
-export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T, calc_p, in_situ_temperature
+export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T, calc_p, theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas
 
 
 
@@ -38,4 +38,8 @@ end
 
 
 #exner function, all of the translations
-in_situ_temperature(θ_z,q_vap,P_z,constants) = θ_z .* (P_z ./ constants.P0).^(constants.Rd / constants.Cp_air)
+theta_from_T(T,P,constants) = T .* (constants.P0 ./ P).^(constants.Rd / constants.Cp_air)
+T_virtual(T,q_vap) = T .* (1 .+ 0.61 .* q_vap)
+T_from_theta(θ,P,constants) = θ .* (P ./ constants.P0).^(constants.Rd / constants.Cp_air)
+θl(P,T,ql,constants) = (constants.P0 ./ P).^(constants.Rd / constants.Cp_air) .* (T .- constants.L .*ql ./constants.Cp_air) #should the last cp be for liquid?
+ρ_ideal_gas(P,T,q_vap,constants) = P ./ (constants.Rd .* T_virtual(T,q_vap))

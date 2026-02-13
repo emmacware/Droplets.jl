@@ -34,11 +34,11 @@ struct scm_eulerian_arrays{FT<:AbstractFloat}
     diagnostics::scm_diagnostics{FT}
 end
 
-function create_scm_grids(num_levels::Int, dz::FT,halo::Int) where {FT<:AbstractFloat}
+function create_scm_grids(num_levels::Int, dz::FT) where {FT<:AbstractFloat}
     faces_z = collect(0:dz:(num_levels)*dz)
-    centers_z = collect(dz/2:dz:(num_levels-1)*dz + dz/2)
-    states = scm_states{FT}(zeros(FT,num_levels+2*halo), zeros(FT,num_levels+2*halo), zeros(FT,num_levels+2*halo), zeros(FT,num_levels+2*halo),zeros(FT,num_levels+2*halo))
-    wind = scm_wind{FT}(zeros(FT,num_levels+2*halo), zeros(FT,num_levels+2*halo), zeros(FT,num_levels+1+2*halo))
+    centers_z = collect(dz/2:dz:((num_levels-1)*dz + dz/2))
+    states = scm_states{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),zeros(FT,num_levels))
+    wind = scm_wind{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels+1))
     diagnostics = scm_diagnostics{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),
         zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels))
     return scm_eulerian_arrays{FT}(num_levels,dz,faces_z, centers_z, states, wind, diagnostics)

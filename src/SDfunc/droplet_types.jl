@@ -21,7 +21,7 @@ struct droplet_attributes_1d{FT<:AbstractFloat} <:droplet_attributes{FT}
     ξ::Vector{Int}
     X::Vector{FT}
     dry_r3::Vector{FT}
-    κ::Vector{FT}
+    # κ::Vector{FT}
     z_loc::Vector{FT}
     cell_id::Vector{Int}
 end

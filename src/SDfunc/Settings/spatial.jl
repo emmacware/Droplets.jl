@@ -32,10 +32,12 @@ Base.@kwdef struct diagnostic_settings{FT<:AbstractFloat}
 end
 
 Base.@kwdef struct scm_settings{FT<:AbstractFloat}
-
+    #this stuff probably isnt that useful yet but good to have the struct for now
     init_random_seed::Int = Int(30) 
     coag_threading =  Serial()#Parallel(),use Julia NThreads for coalescence
     scheme = none() #Adaptive,Small_Alpha
     Δt::FT = FT(1.0)
+    surface_latent_heat_flux::FT = FT(93.0) # W/m^2
+    surface_sensible_heat_flux::FT = FT(16.0) # W/m^2
 
 end

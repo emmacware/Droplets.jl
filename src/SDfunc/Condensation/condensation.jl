@@ -8,30 +8,8 @@ export dXkohler_function_of_radius_activated,drkohler_activated
 export set_X_crit!
 export dM_dt
 export drkappakohler
-export v_term
-
-# FK(T),            returns FK in the Köhler equation
-# FD(T),            returns FD in the Köhler equation
-# esat(T),          returns saturation vapor pressure
-# sat(qvarray,P),   returns environmental saturation
-#
-# drdtcondensation1(u,p,t)      ODE function for condensation, p = (a,b,S,M,denom)
-# drdtcondensation2(u,p,t)      ODE function for condensation, p = (M,m,T,qv,P)
-# drdtcondensation3(u,p,t)      ODE function for condensation, p = (M,m,T,Senv) 
-#
-# drkohler(R,M,m,T,qv,P), returns drdt (LHS of Köhler equation)
-# drkohler(R,M,m,Senv),   returns drdt (LHS of Köhler equation)
-#
-# eq_radius(m,M,qv,P,T),  returns equilibrium radius for droplet activation (considering subsaturation)
-# eq_radius(m,M,Senv,T),  returns equilibrium radius for droplet activation (considering subsaturation)
-#
-# condense_and_calc_Sv!(qvarray,T,P,ρ,Δtg,ΔgridV,Nx,Ny,grid_dict),  returns Sv,grid_dict
-# condense_and_calc_Sv!(R,ξ,X,M,m,qvarray,T,P,ρ,Δtg,ΔV),            returns R,X,Sv
-# condense_and_calc_Sv!(R,ξ,X,M,Senv,T,ρ,Δtg,ΔV),                   returns R,X,Sv
-#
-# θcondenseupdate!(Sv, θ, Δtg,P),           returns θ,T
-# qvcondenseupdate!(Sv, qvarray, P,T, Δtg), returns ρ*qvarray,ρ
-
+export v_term #move 
+export condensation_rhs!
 
 ######################################################################
 # 
@@ -132,12 +110,12 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv,timestep)
+function drkappakohler(R,dry_r3,kappa,T,Senv,ρ_solute, timestep)
     b = kappa * dry_r3
-    M = 4/3 * π * dry_r3 * 1.78e3 #kg/m3 # hardcoded for dycoms right now CHANGE
+    M = 4/3 * π * dry_r3 * ρ_solute
     denom = (FK(T) + FD(T))
     dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
-    return R + dr * timestep > 0 ? dr : -R / timestep
+    return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 
@@ -295,20 +273,36 @@ end
 #     return sqrt(8*R*(ρl-ρ_air)*g/(3*cd*ρ_air))
 # end
 
-function v_term(radius)
-    if radius < 30e-6
-        vt = 1.19e6 * radius^2
-    elseif radius < 60e-6
-        vt = 8e3 * radius
-    elseif radius < 2e-3
-        vt = 2.01e3 * radius^0.5
+# function v_term(radius)
+#     if radius < 30e-6
+#         vt = 1.19e6 * radius^2
+#     elseif radius < 60e-6
+#         vt = 8e3 * radius
+#     elseif radius < 2e-3
+#         vt = 2.01e3 * radius^0.5
+#     else
+#         vt = 2.01e3 * 2e-3^0.5
+#     end 
+#     return vt
+# end
+
+function v_term(radius_m)
+    radius_cm = radius_m * 1e2
+    if radius_m < 30e-6
+        vt = 1.19e6 * radius_cm^2
+    elseif radius_m < 60e-6
+        vt = 8e3 * radius_cm
+    elseif radius_m < 2e-3
+        vt = 2.01e3 * radius_cm^0.5
     else
         vt = 2.01e3 * 2e-3^0.5
     end 
-    return vt
+    return vt * 1e-2 #convert back to m/s
 end
 
-function dM_dt(R,T,Senv,p_air,ρ_air,η,ε_r,Fs,ε_0)
+
+
+function dM_dt(R,T,Senv,p_air,ρ_air,η,ε_r,Fs,ε_0) #Zeng et al 2018
     Dv = D(T,p_air)
     Re_ = Reynoldsnumber(R,ρ_air,T)
     K_th = K(T)
@@ -386,19 +380,6 @@ function dX_droplets!(X,dry_r3, kappa, qv, T, P, dt)
     return dX
 end
 
-# function θcondenseupdate!(Sv,θ,Δtg,P,P0)
-#     Exner = (P./P0).^(constants.Rd/constants.Cp)
-#     θ = θ .+ -Δtg*constants.L.*Sv./(constants.Cp.*Exner)
-#     T = θ.*(P./P0).^(constants.Rd/constants.Cp)
-#     return θ,T
-# end
-
-# function qvcondenseupdate!(Sv, qvarray, P,T,Δtg)
-#     qvarray = qvarray .+ Δtg.*Sv
-#     ρd =  P./(constants.Rd.*T)
-#     ρ = ρd ./(1 .- qvarray) 
-#     return qvarray,ρ
-# end
 
 function set_X_crit!(droplets,i,kappa,T)
     # Set the critical volume for condensation
@@ -407,3 +388,66 @@ function set_X_crit!(droplets,i,kappa,T)
     R_crit = sqrt(3 * b / a) / 2
     droplets.X[i] = radius_to_volume(R_crit)  # Convert radius to volume
 end
+
+
+
+function condensation_rhs!(du, u, p, t)
+    du .= zero.(u)  # Initialize du to zero, preserving the structure and types of u
+    FT = eltype(u)
+    lnR = u.lnR
+    qvap_col = u.qvap
+    T_col = u.T
+    nz,drops,grid,constants,condsettings = p
+    R = exp.(lnR)
+    T_v = T_col .* (1 .+ 0.61 .* qvap_col)
+    Rd = constants.Rd
+
+    for k in 1:length(nz)
+        P::FT = grid.P[k]
+        T::FT  = T_col[k]
+        qv::FT = qvap_col[k]
+        Tv::FT = T_v[k]
+        ρ_air::FT = P / Rd / Tv
+        S_env::FT = sat.(qv, P) ./ esat(T)
+        #find all indexes where drops.cell_id == k
+        R_idx = findall(drops.cell_id .== k)
+
+        dR = drkappakohler.(R[R_idx],drops.dry_r3[R_idx],condsettings.kappa,T,S_env,condsettings.ρ_solute, t)
+        dX = 4 * π .* R[R_idx].^2 .* dR
+
+        dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air)
+        dT = - dqvap * constants.L / constants.Cp_air
+
+        du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
+        du.qvap[k] = FT(dqvap)
+        du.T[k] = FT(dT)
+    end
+end
+
+# function condensation_rhs_single_cell(du, u, p, t)
+#     lnR = u.lnR
+#     du.lnR .= 0
+#     qv = u.qvap
+#     T = u.T
+#     drops,grid,constants,k = p
+#     R = exp.(lnR)
+#     Tv = T .* (1 + 0.61 * qvap)
+#     Rd = constants.Rd
+
+#     P = grid.P[k]
+#     ρ_air = P / Rd / Tv
+#     S_env = sat.(qv, P) ./ esat(T)
+
+#     R_idx = findall(drops.cell_id .== k)
+
+#     dR = drkappakohler(R[R_idx],drops.dry_r3[R_idx],drops.kappa[R_idx],T,Senv,t)
+#     dX = 4 * π .* R[R_idx]^2 * dR
+
+#     dqvap = - sum(dX .* drops.ξ[R_idx] .* ρₗ / ρ_air)
+#     dT = - dqvap * constants.L / constants.Cp_air
+
+#     du.lnR[R_idx] = dR ./ R[R_idx]
+#     du.qvap = dqvap
+#     du.T = dT
+
+# end

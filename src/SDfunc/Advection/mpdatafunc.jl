@@ -1,5 +1,5 @@
 export mpdata_step!, flux_horizontal!, flux_vertical!, donor_cell_pass!, compute_antidiffusive_velocity!
-export antiosc!, flux_faces, beta_function, find_extrema!
+export antiosc!, flux_faces, beta_function, find_extrema!, mpdata_scm!
 
 limit(bc::Periodic,i,N) = i > N ? i - N : i < 1 ? i + N : i
 limit(bc::NoFlux,i,N) = i > N ? N + 1 - (i - N) : i < 1 ? i + (1 + abs(i)) : i
@@ -357,4 +357,16 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
         donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge)
 
     end
+end
+
+function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+
+    GCz = grid.wind.w * Δt ./ grid.dz
+
+    mpdata_step!(grid.states.qv, GCz,tmp,settings)
+    mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    
+    grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
+    grid.states.ρ .= ρ_ideal_gas(grid.states.P,grid.states.T,grid.states.qv,constants)
+    return
 end

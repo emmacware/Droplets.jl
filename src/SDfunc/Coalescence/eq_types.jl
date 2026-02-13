@@ -127,6 +127,8 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::Adaptive,dro
     return nothing
 end 
 
+
+#totally rework
 function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
     coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
     
@@ -141,6 +143,9 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
     for g in 1:N_grids
         #find the number of droplets in the grid
         grid_idx = findfirst(i -> droplets.cell_id[i] == g, coag_data.I)
+        if grid_idx == nothing
+            continue
+        end
         grid_Ns = count(i -> droplets.cell_id[i] == g, coag_data.I)
         pair_idx_start = div(grid_idx, 2) + 1
         pair_idx_end = pair_idx_start + div(grid_Ns-1, 2) - 1
@@ -159,7 +164,7 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
 
     compute_pαdt!(L, droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
 
-    rand!(coag_data.ϕ[1:length(L)])
+    rand!(coag_data.ϕ)
 
     test_pairs!(run,L,droplets,coag_data)
 
