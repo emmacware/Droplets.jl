@@ -3,7 +3,7 @@
 ##################################################
 
 export Constants,constants
-export kg_to_g, m_to_μm, volume_to_radius, radius_to_volume
+export kg_to_g, m_to_μm, volume_to_radius, radius_to_volume, ccm_to_cm
 
 """
     Constants{FT<:AbstractFloat}
@@ -22,6 +22,7 @@ A struct representing constants used in the Droplets package.
 - `gconst`: gravitational constant (default: 9.8).
 - `L`: latent heat of vaporization (default: 22.6e5).
 - `Cp`: specific heat of dry air at constant pressure (default: 4181).
+- `σSB`: Stefan-Boltzmann constant (default: 5.670374419e-8).
 
 """
 Base.@kwdef struct Constants{FT<:AbstractFloat}
@@ -35,14 +36,23 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     Rv = FT(461.0)        # 
     gconst = FT(9.8)    # gravitational constant, m/s2
     L = FT(22.6e5)         # Latent Heat of Vaporization J/kg
-    Cp = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
+    Cp_water = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
+    Cp_vapor = FT(1859)     # ClimaParams "isobaric_specific_heat_vapor"
+    Cp_air = FT(1005)
+    σSB = FT(5.670374419e-8) # Stefan-Boltzmann constant W⋅m−2⋅K−4
+    T0 = FT(273.15)       # reference temperature K
+    P0 = FT(100000.0)     # reference pressure Pa for potential temperature
+    P_SLP = FT(101325.0)     # standard sea level pressure Pa
+    # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
+    ϵ = FT(1.6080793637401138)           # molar mass ratio air and vapor
 end
 
-constants = Constants{Float32}()
+const constants = Constants{Float32}()
 
 #Conversions
 const kg_to_g = 1e3
 const m_to_μm = 1e6
+const ccm_to_cm = 1e6 # conversion from cm^-3 to m^-3
 
 """
     volume_to_radius(V::AbstractFloat)

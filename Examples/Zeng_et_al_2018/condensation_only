@@ -1,0 +1,246 @@
+
+using Random
+using Plots
+using Droplets
+using CPUTime
+using ComponentArrays
+import OrdinaryDiffEq as ODE
+using DiffEqCallbacks
+
+FT = Float64
+
+R0 = FT(10e-6)
+LWC = FT(1.0e-3)  # kg/m^3
+T = FT(273.15 + 15)  # K
+P = FT(850e2)  # Pa
+η_z = FT(0.8) 
+η(η_z) = 0.5(η_z-1)+1
+ε_r = FT(1.0)
+Fs = FT(0)
+ε_0 = FT(1.0)
+S = FT(1.00)
+dt = FT(0.25)
+
+
+X0 = (4/3)*π*R0^3  # initial volume in m^3
+coagsettings = coag_settings{FT}(
+    Ns=2^13,
+    Δt=1.0,
+    ΔV=1,
+    n0=LWC/(X0*constants.ρl),
+    R0=R0,
+    R_min=1e-6,
+    R_max=100e-6,
+    kernel=golovin,
+)
+
+init_method = init_logarithmic_deterministic
+binning_method = mass_density_lnr 
+
+w = esat(T)/(P - esat(T))*0.622
+Tv = T*(1 + 0.61*w)
+ρ_air = P/(constants.Rd*Tv)
+
+drops = init_method(coagsettings)
+r2_init = (volume_to_radius.(drops.X)).^2
+d_Y_init = ComponentVector{FT}(S=S,T=T,ξ =drops.ξ, r2 = r2_init)
+params = (ρ_air=ρ_air,p_air=P,
+    η=η(η_z),ε_r=ε_r,Fs=Fs,ε_0=ε_0)
+
+function parcel_model_radiative(dY, Y_CompVec, params, t)
+    # Numerical precision used in the simulation
+    FT = eltype(Y_CompVec)
+    ρ_air,p_air, η,ε_r,Fs,ε_0 = params
+
+    S = Y_CompVec.S
+    T = Y_CompVec.T
+    # t = t
+
+    # Constants
+    Rv = constants.Rv
+
+    # R = volume_to_radius.(Y_CompVec.X)
+    r2 = Y_CompVec.r2
+    for i in eachindex(r2)
+        if r2[i] < 0
+            r2[i] = 0.0
+        end
+    end
+    R = sqrt.(r2)
+
+    dM = dM_dt.(R,T,S,p_air,ρ_air,η,ε_r,Fs,ε_0)
+    dR2 = (1 ./(2pi .*R)).*dM./constants.ρl
+    
+
+    for i in eachindex(R)
+        if R[i] == 0
+            dR2[i] = 0
+            dM[i] = 0
+        end
+    end
+
+    dm_tot = sum(dM.*Y_CompVec.ξ)
+
+
+    dS = -ρ_air*(constants.Rv*T/((esat(T))) + constants.Rd*constants.L^2/(p_air*constants.Cp_air*Rv*T))*dm_tot
+    dT = constants.L * (dm_tot/ρ_air) / constants.Cp_air  / ρ_air
+
+
+    dY[1] = dS      # saturation ratio over liquid water
+    dY[2] = dT
+    dY.r2 .= dR2
+    dY.ξ .= 0
+end
+
+condition(u, t, integrator) = max(0,minimum(u.r2))   # triggers exactly at r2=0
+affect!(integrator) = @. integrator.u.r2 = max(integrator.u.r2, 0)
+cb = ODE.ContinuousCallback(condition, affect!)
+
+
+num_bins = 100
+radius_bins_edges = 10 .^ range(log10(1*1e-6), log10(10000*1e-6), length=num_bins+1) 
+runsettings=run_settings{FT}(
+    num_bins = num_bins,
+    radius_bins_edges = radius_bins_edges,
+    smooth = true,
+    binning_method = binning_method,
+)
+threading,scheme = runsettings.coag_threading, runsettings.scheme
+coag_data = coagulation_run{FT}(coagsettings.Ns)
+
+# create a discrete callback for collision/coalescence every coagsettings.Δt
+# coag_condition(u, t, integrator) = t - integrator.tprev - coagsettings.Δt
+function coag_affect!(integrator)
+    ξ = Int.(round.(collect(integrator.u.ξ)))
+    r2 = collect(integrator.u.r2)
+    X = radius_to_volume.(sqrt.(r2))
+    drops = droplet_attributes{FT}(ξ,X)
+    coalescence_timestep!(threading,scheme,drops,coag_data,coagsettings)
+    r2_new = (volume_to_radius.(drops.X)).^2
+    integrator.u.r2 .= r2_new
+    integrator.u.ξ .= drops.ξ
+end
+coag_cb = PeriodicCallback(coag_affect!, coagsettings.Δt)
+callbacks = ODE.CallbackSet(cb, coag_cb)
+
+
+
+
+solutions = Dict()
+for η_z in [0.7,0.8, 0.9,1.1]
+    println("Running for η_z = $η_z")
+    params = (ρ_air=ρ_air,p_air=P,
+        η=η(η_z),ε_r=ε_r,Fs=Fs,ε_0=ε_0)
+    problem = ODE.ODEProblem(parcel_model_radiative, d_Y_init, (FT(0), FT(3600)), params)
+    sol = ODE.solve(problem, ODE.Euler(),
+    callback=cb,#callbacks,
+    dt=dt,
+    reltol = 100 * eps(FT),
+    abstol = 100 * eps(FT),
+    saveat = collect(0:60:3600)
+    )
+    solutions[η_z] = sol
+end
+
+
+##plot1
+plot1_data = solutions[0.8]
+# find the closest indexes to  [600,1200,1800, 2400,3000, 3600] in sol.t
+time_indices = []
+for target_time in [1,600.0,1200.0,1800.0, 2400.0,3000.0, 3600.0]
+    index = findmin(abs.(plot1_data.t .- target_time))[2]
+    push!(time_indices, index)
+end
+plot1 = plot()
+ylims!(1e-4,1e1)
+for i in time_indices
+    r = sqrt.(abs.(collect(plot1_data.u[i].r2)))
+    X = radius_to_volume.(r)
+    ξ = (round.((collect(plot1_data.u[i].ξ))))
+    #replace nan with zeros
+    for j in eachindex(ξ)
+        if isnan(ξ[j])
+            ξ[j] = 0.0
+        end
+    end
+    ξ = Int.(ξ)
+    drops = droplet_attributes{FT}(ξ,X)
+    numdens = binning_func(drops, plot1_data.t[end], runsettings, coagsettings)
+    plot!(runsettings.radius_bins_edges[1:end-1]*1e6, numdens*1000, xaxis=:log,yaxis=:log,
+        label="t = $(round(plot1_data.t[i])) s",legend=:outerright
+    )
+    xticks = vcat(collect(1:9), collect(10:10:100))
+    xtick_labels = string.(xticks)
+    for j in eachindex(xtick_labels)
+        if !(xticks[j] in [1,10,100])
+            xtick_labels[j] = ""
+        end
+    end
+    xticks!(xticks, xtick_labels)
+end
+plot1 = plot!(xlabel="Radius (μm)", ylabel="Mass Density (g m-3 lnr-1)", title="Figure 1: η_z = 0.8")
+
+##plot2
+plot2_data = solutions[1.1]
+
+time_indices = []
+for target_time in [1,600.0,1200.0,1800.0, 2400.0,3000.0, 3600.0]
+    index = findmin(abs.(plot2_data.t .- target_time))[2]
+    push!(time_indices, index)
+end
+plot2 = plot()
+ylims!(1e-4,1e1)
+for i in time_indices
+    r = sqrt.(abs.(collect(plot2_data.u[i].r2)))
+    X = radius_to_volume.(r)
+    ξ = (round.((collect(plot2_data.u[i].ξ))))
+    #replace nan with zeros
+    for j in eachindex(ξ)
+        if isnan(ξ[j])
+            ξ[j] = 0.0
+        end
+    end
+    ξ = Int.(ξ)
+    drops = droplet_attributes{FT}(ξ,X)
+    numdens = binning_func(drops, plot2_data.t[end], runsettings, coagsettings)
+    plot!(runsettings.radius_bins_edges[1:end-1]*1e6, numdens*1000, xaxis=:log,yaxis=:log,
+    label="t = $(round(plot2_data.t[i])) s", legend=:outerright
+    )
+    xticks = vcat(collect(1:9), collect(10:10:100))
+    #only label 1,10,100
+    xtick_labels = string.(xticks)
+    for j in eachindex(xtick_labels)
+        if !(xticks[j] in [1,10,100])
+            xtick_labels[j] = ""
+        end
+    end
+    xticks!(xticks, xtick_labels)
+end
+plot2 = plot!(xlabel="Radius (μm)", ylabel="Mass Density (g m-3 lnr-1)", title="Figure 4: η_z = 1.1")
+
+
+
+plot3 = plot()
+for η_z in [0.7,0.8, 0.9,1.1]
+    plot3_data = solutions[η_z]
+    S_timeseries = [plot3_data[i].S for i in 1:length(plot3_data.t)]
+    plot3 = plot!(plot3_data.t,((S_timeseries.-1)*100),label="η_z = $η_z", xlabel="Time (s)", ylabel="Supersaturation (%)", legend=false)
+    ylims!(-.4,.1)
+end
+plot3 = plot!(title="Figure 3: Supersaturation", legend=:outerright)
+
+# plot()
+# for η_z in [0.7,0.8, 0.9,1.1]
+#     plot3_data = solutions[η_z]
+#     T_timeseries = [plot3_data[i].T for i in 1:length(plot3_data.t)]
+#     plot!(plot3_data.t,T_timeseries,label="η_z = $η_z", xlabel="Time (s)", ylabel="Supersaturation (%)", legend=false)
+#     # ylims!(-.4,.1)
+# end
+# plot!()
+
+
+plot(plot1, plot2,plot3, layout = (3,1), size=(600,800))
+savefig("Zeng_et_al_2018_condensation_only.pdf")
+# T_timeseries = [sol.u[i].T for i in 1:length(sol.t)]
+# plot(sol.t,T_timeseries)   
+
