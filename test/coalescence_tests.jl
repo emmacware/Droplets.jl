@@ -100,7 +100,7 @@ end
         @test two_drops_coag_data.lowest_zero[] == false
         
         #act
-        test_pairs!(Serial(),2,[(1,2)],two_drops,two_drops_coag_data)
+        test_pairs!(Serial(),[(1,2)],two_drops,two_drops_coag_data)
 
         #assert
         @test two_drops_coag_data.lowest_zero[] == true
@@ -116,7 +116,7 @@ end
         two_drops_coag_data.ϕ[1] = 0.5
         two_drops_coag_data.pαdt[1] = 2
         #act
-        test_pairs!(Serial(),2,[(1,2)],two_drops,two_drops_coag_data)
+        test_pairs!(Serial(),[(1,2)],two_drops,two_drops_coag_data)
 
         #assert
         @test two_drops.ξ == [2,2]
@@ -134,7 +134,7 @@ end
         two_drops_coag_data.deficit[] = 0
 
         # act
-        test_pairs!(Serial(),2,[(1,2)],two_drops,two_drops_coag_data)
+        test_pairs!(Serial(),[(1,2)],two_drops,two_drops_coag_data)
 
         # assert
         @test two_drops_coag_data.deficit[] == 4
@@ -180,7 +180,7 @@ end
         coagsettings = coag_settings{FT}(Ns = 4)
 
         #act
-        compute_pαdt!(L,drops,coag_data,golovin,coagsettings.scale,coagsettings)
+        compute_pαdt!(L,drops,coag_data,golovin,coagsettings)
 
         #assert
         @test coag_data.pαdt[1] == 3*coagsettings.golovin_kernel_coeff*(X[1]+X[2])*(coagsettings.scale * coagsettings.Δt / coagsettings.ΔV)
