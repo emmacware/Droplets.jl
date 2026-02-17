@@ -18,7 +18,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # stand_in_radiation_update_function(grid,spatialsettings, diagnosticsettings, constants)
 
     #Update microphysics (condensation, coagulation)
-    condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings)
+    condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings,spatialsettings)
     coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
 
     #Droplet motion (advection and settling)
@@ -34,17 +34,24 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 end
 
 
-function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings)
+function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings)
     # Calculate the condensation time step for each droplet
-    droplets.X
+    # droplets.X
     lnR = log.(volume_to_radius.(droplets.X))
 
     condensation.u.lnR .= lnR
     condensation.u.qvap .= state.qv
     condensation.u.T .= state.T
+    # for k in 1:nz
+    #     println("Condensation timestep for grid cell ", k)
+    #     condensation.p = (k,droplets, state, constants, condsettings, spatialsettings)
 
-    condensation.p = (nz,droplets, state, constants, condsettings)
-    
+        
+    #     step!(condensation, Δtg, true)
+    # end
+    condensation.p = (nz,droplets, state, constants, condsettings, spatialsettings)
+
+        
     step!(condensation, Δtg, true)
 
     droplets.X .= radius_to_volume.(exp.(condensation.u.lnR))
@@ -55,6 +62,7 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
 
     return
 end
+
 
 function update_surface_forcings!(grid, constants, scmsettings)
     grid.states.T[1] += scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz)

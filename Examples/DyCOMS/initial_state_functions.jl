@@ -70,28 +70,39 @@ function init_droplets_dycoms_scm(dist,settings::coag_settings{FT},
     dry_r3 = rad.^3
     volumes = 4* pi / 3 .* dry_r3 #initialize as just aerosol volume.
 
-    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id)
+    dropidx = collect(1:Ns)
+
+    sort!(dropidx, by = i -> cell_id[i])
+    grid_range = [findfirst(i -> cell_id[i] == g, dropidx) : findlast(i -> cell_id[i] == g, dropidx) for g in 1:spatial.Nz]
+
+
+    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id,grid_range)
     return droplets
 end
 
 function plot_env_profiles(grid)
     p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
     p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="q_v", legend=false)
+    p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
+    # p6 = plot((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
+
     p3 = plot(grid.states.P,grid.centers_z, ylabel="Height (m)", xlabel="Pressure (Pa)", title="P", legend=false)
     p4 = plot(grid.states.ρ,grid.centers_z, ylabel="Height (m)", xlabel="density (kg/m3)", title="ρ", label = "ρ")
     # p4 = vline!([ρ_inv], line=:dash, color=:red, label="ρ_inv")
     p5 = plot(grid.states.T,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
-
-    plot(p1, p2, p3,p4,p5, layout=(3,2), size=(800,900))
+    p5 = plot!(T_virtual.(grid.states.T, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
+    plot(p1, p2, p3,p4,p5,p6, layout=(3,2), size=(800,900))
 end
 
 
-function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, constants)
+function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
     nz = grid.nz
     lnR = log.(volume_to_radius.(drops.X))
     Y = ComponentVector{FT}(lnR = lnR, qvap=grid.states.qv, T = grid.states.T)
-    p = (nz,drops, grid.states, constants, condensationsettings)
+    p = (nz,drops, grid.states, constants, condensationsettings,spatialsettings)
     condensation_prob = ODEProblem(condensation_rhs!, Y, (0.0, 1.0), p)
-    condensation_integrator = init(condensation_prob, Tsit5(),dt=0.5, reltol = 1e-10, abstol = 1e-10)
+    # condensation_prob = ODEProblem(condensation_rhs_single_cell, Y, (0.0, 1.0), p)
+
+    condensation_integrator = init(condensation_prob, ImplicitEuler(), reltol = 1e-12, abstol = 1e-12)
     return condensation_integrator
 end

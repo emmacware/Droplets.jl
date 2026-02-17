@@ -4,7 +4,7 @@
 #---------------------------------------------------------
 # SDM logic
 export adaptive_pαdt!, pair_Ps_adaptive!,compute_pαdt!,split_highest_multiplicity!,test_pairs!,pair_Ps!,sdm_update!
-
+export sdm_step!
 
 
 """
@@ -261,3 +261,60 @@ end
 
 
 
+
+
+
+
+#############
+
+@inline function sdm_step!(i, droplets::droplet_attributes_1d,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+    if coag_data.first_in_pair[i] == false
+        return nothing
+    end
+    pair = (coag_data.I[i], coag_data.I[i+1])
+    step_Ps!(pair, droplets,coag_data,kernel,coagsettings)
+end
+
+@inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+    cell = droplets.cell_id[j]
+    Ns_c = length(droplets.grid_range[cell])
+    scale = Ns_c * (Ns_c - 1) / div(Ns_c, 2)
+    pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
+    ϕ = rand()
+    if ϕ < pαdt 
+        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data)
+    end
+end
+
+@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run) where FT<:AbstractFloat
+
+    j,k = pair
+    if droplets.ξ[j] < droplets.ξ[k]
+        j,k = k,j
+    end
+
+    ξj, ξk = droplets.ξ[j], droplets.ξ[k]
+    # pα =  coag_data.pαdt[α]
+
+    pα_floor::FT = @fastmath floor(pα)
+    γ::FT  = ϕ < pα - pα_floor ? pα_floor +1 : pα_floor
+
+    if γ >= (floor_ξj_div_ξk = floor(ξj / ξk))
+        # coag_data.deficit[α] += (γ - floor_ξj_div_ξk) * ξk
+        γ = floor_ξj_div_ξk
+    end
+
+    if ξj > γ * ξk
+        droplets.ξ[j] -= γ * ξk
+        droplets.X[k] = γ * droplets.X[j] + droplets.X[k]
+    else
+        droplets.ξ[j] = floor(ξk / 2)
+        droplets.ξ[k] -= droplets.ξ[j]
+        droplets.X[k] = droplets.X[j] = γ *droplets.X[j] + droplets.X[k]
+
+        if droplets.ξ[j] == 0
+            coag_data.lowest_zero[] = true
+        end
+    end
+    return nothing
+end

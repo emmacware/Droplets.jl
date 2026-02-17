@@ -11,12 +11,24 @@ export update_position!, update_droplet_positions!
 # limitvface(a, N_y) = a > N_y +1 ? N_y +1 : a < 1 ? 1 : a
 
 
-function update_droplet_positions!(droplets, w_function, Δt,spatialsettings)
-    droplet_flow = w_function.(droplets.z_loc) .- v_term.(volume_to_radius.(droplets.X))
-    droplets.z_loc .+= droplet_flow .* Δt
+function update_droplet_positions!(droplets::droplet_attributes_1d, w_function, Δt::FT,spatialsettings::spatial_settings_1d) where FT<:AbstractFloat
+    # map(i -> update_each_droplet!(i, droplets, w_function, Δt, spatialsettings), 1:length(droplets.X))
+    droplets.z_loc .+=  w_function.(droplets.z_loc) - v_term.(volume_to_radius.(droplets.X)) .* Δt
     droplets.cell_id .= Int.(floor.(droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1)
-    # need to handle droplets that have precipitated out of the domain
+    return nothing
 end
+
+# function update_each_droplet!(i, droplets, w_function, Δt, spatialsettings)
+#     if droplets.cell_id[i] <= 1
+#         return nothing
+#     end
+
+#     droplets.z_loc[i] +=  w_function(droplets.z_loc[i]) - v_term(volume_to_radius.(droplets.X[i])) * Δt
+#     droplets.cell_id[i] = Int(floor(droplets.z_loc[i] / spatialsettings.z_grid_height) + 1)
+#     return nothing
+# end
+
+
 
 function update_gridflow_position!(droplets::droplet_attributes_1d,dt,grid_vels,spatial_settings)
     (;upper_face_vel, lower_face_vel) = grid_vels

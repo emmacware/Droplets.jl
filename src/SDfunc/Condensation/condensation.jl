@@ -9,7 +9,7 @@ export set_X_crit!
 export dM_dt
 export drkappakohler
 export v_term #move 
-export condensation_rhs!
+export condensation_rhs!, condensation_rhs_single_cell
 
 ######################################################################
 # 
@@ -110,12 +110,14 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv,ρ_solute, timestep)
+function drkappakohler(R,dry_r3,kappa,T,Senv, timestep)
     b = kappa * dry_r3
-    M = 4/3 * π * dry_r3 * ρ_solute
+    # M = 4/3 * π * dry_r3 * ρ_solute
     denom = (FK(T) + FD(T))
-    dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
-    return R + dr * timestep > 0 ? dr : -R / timestep
+    # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
+    dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
+    
+    return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 
@@ -392,62 +394,71 @@ end
 
 
 function condensation_rhs!(du, u, p, t)
-    du .= zero.(u)  # Initialize du to zero, preserving the structure and types of u
-    FT = eltype(u)
+    du .= 0#zero.(u)  # Initialize du to zero, preserving the structure and types of u
+    FT = eltype(u.lnR)
     lnR = u.lnR
     qvap_col = u.qvap
     T_col = u.T
-    nz,drops,grid,constants,condsettings = p
+    nz,drops,grid,constants,condsettings,spatialsettings = p
     R = exp.(lnR)
-    T_v = T_col .* (1 .+ 0.61 .* qvap_col)
+    T_v = T_virtual.(T_col, qvap_col)
     Rd = constants.Rd
+    gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
 
-    for k in 1:length(nz)
+    for k in 1:nz
         P::FT = grid.P[k]
         T::FT  = T_col[k]
         qv::FT = qvap_col[k]
         Tv::FT = T_v[k]
         ρ_air::FT = P / Rd / Tv
-        S_env::FT = sat.(qv, P) ./ esat(T)
+        S_env::FT = sat(qv, P) / esat(T)
         #find all indexes where drops.cell_id == k
         R_idx = findall(drops.cell_id .== k)
+        if !isempty(R_idx)
+            dR = drkappakohler.(R[R_idx],drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
+            dX = 4 * π .* R[R_idx].^2 .* dR
 
-        dR = drkappakohler.(R[R_idx],drops.dry_r3[R_idx],condsettings.kappa,T,S_env,condsettings.ρ_solute, t)
-        dX = 4 * π .* R[R_idx].^2 .* dR
+            dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
+            dT = - dqvap * constants.L / constants.Cp_air
 
-        dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air)
-        dT = - dqvap * constants.L / constants.Cp_air
-
-        du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
-        du.qvap[k] = FT(dqvap)
-        du.T[k] = FT(dT)
+            du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
+            du.qvap[k] = FT(dqvap)
+            du.T[k] = FT(dT)
+        end
     end
 end
 
-# function condensation_rhs_single_cell(du, u, p, t)
-#     lnR = u.lnR
-#     du.lnR .= 0
-#     qv = u.qvap
-#     T = u.T
-#     drops,grid,constants,k = p
-#     R = exp.(lnR)
-#     Tv = T .* (1 + 0.61 * qvap)
-#     Rd = constants.Rd
+function condensation_rhs_single_cell(du, u, p, t)
+    du .= 0  # Initialize du to zero, preserving the structure and types of u
+    FT = eltype(u.lnR)
+    k,drops,grid,constants,condsettings,spatialsettings = p
+    lnR = u.lnR
+    qv = u.qvap[k]
+    T = u.T[k]
+    
+    
+    Tv = T_virtual.(T, qv)
+    Rd = constants.Rd
+    gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
+    P::FT = grid.P[k]
+    R_idx = findall(drops.cell_id .== k)
+    R = exp.(lnR[R_idx])
 
-#     P = grid.P[k]
-#     ρ_air = P / Rd / Tv
-#     S_env = sat.(qv, P) ./ esat(T)
 
-#     R_idx = findall(drops.cell_id .== k)
+    ρ_air::FT = P / Rd / Tv
+    S_env::FT = sat(qv, P) / esat(T)
 
-#     dR = drkappakohler(R[R_idx],drops.dry_r3[R_idx],drops.kappa[R_idx],T,Senv,t)
-#     dX = 4 * π .* R[R_idx]^2 * dR
+    if !isempty(R_idx)
+        dR = drkappakohler.(R,drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
+        dX = 4 * π .* R.^2 .* dR
 
-#     dqvap = - sum(dX .* drops.ξ[R_idx] .* ρₗ / ρ_air)
-#     dT = - dqvap * constants.L / constants.Cp_air
+        dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
+        dT = - dqvap * constants.L / constants.Cp_air
 
-#     du.lnR[R_idx] = dR ./ R[R_idx]
-#     du.qvap = dqvap
-#     du.T = dT
+        du.lnR[R_idx] .= FT.(dR ./ R)
+        du.qvap[k] = FT(dqvap)
+        du.T[k] = FT(dT)
+    end
 
+end
 # end

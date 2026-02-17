@@ -82,7 +82,7 @@ Volume of sphere with radius R
     return 4/3*pi*R^3
 end
 
-
+Base.broadcastable(x::Constants) = Ref(x)
 
 
 

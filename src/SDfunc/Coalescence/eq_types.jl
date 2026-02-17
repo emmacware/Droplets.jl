@@ -52,23 +52,33 @@ end
 
 struct coagulation_run_spatial{FT<:AbstractFloat} <:coagulation_run{FT}
 
-    N_in_cell::Vector{Int}
+    # N_in_cell::Vector{Int}
+    Ngrids::Int
     I::Vector{Int}
-    scale::Vector{FT}
-    pαdt::Vector{Float64}
-    ϕ::Vector{Float64}
+    # scale::Vector{FT}
+    # pαdt::Vector{Float64}
+    # ϕ::Vector{Float64}
     lowest_zero::Ref{Bool}
     deficit::Vector{Float64}
+    first_in_pair::Vector{Bool}
+    # grid_range::Vector{UnitRange{Int}}
 
-    function coagulation_run_spatial{FT}(GridCount::Int, System_Ns) where FT<:AbstractFloat
-        N_in_cell = zeros(Int, GridCount)
+    function coagulation_run_spatial{FT}(GridCount::Int, System_Ns,droplets) where FT<:AbstractFloat
+        # N_in_cell = zeros(Int, GridCount)
         I = collect(1:System_Ns)
-        scale = zeros(FT, div(System_Ns, 2))
-        pαdt = zeros(FT, div(System_Ns, 2))
+        # scale = zeros(FT, div(System_Ns, 2))
+        # pαdt = zeros(FT, div(System_Ns, 2))
         ϕ = zeros(FT, div(System_Ns, 2))
         lowest_zero = Ref(false)
         deficit = zeros(FT, div(System_Ns, 2))
-        new{FT}(N_in_cell, I,scale, pαdt, ϕ, lowest_zero, deficit)
+        first_in_pair = falses(System_Ns)
+        
+        # grid_range = Vector{UnitRange{Int}}(undef, GridCount)
+        # sort!(coagdata.I, by = i -> droplets.cell_id[i])
+        # coagdata.grid_range .= [findfirst(i -> droplets.cell_id[i] == g, coagdata.I) : findlast(i -> droplets.cell_id[i] == g, coagdata.I) for g in 1:GridCount]
+
+        new{FT}(GridCount,I,lowest_zero, deficit, first_in_pair)#, grid_range)
+        # new{FT}(N_in_cell, I,scale, pαdt, ϕ, lowest_zero, deficit)
     end
 end
 
@@ -128,45 +138,80 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::Adaptive,dro
 end 
 
 
+# #totally rework
+# function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
+#     coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
+    
+#     N_grids = length(coag_data.N_in_cell)
+#     Ns = settings.Ns
+#     shuffle!(coag_data.I)
+#     #sort by cell id
+#     sort!(coag_data.I, by = i -> droplets.cell_id[i])
+#     #if there are d
+#     coag_data.scale.= 0
+#     #initiale L:
+#     L = Vector{Tuple{Int,Int}}(undef, div(Ns, 2))
+
+#     for g in 1:N_grids
+#         #find the number of droplets in the grid
+#         grid_idx = findfirst(i -> droplets.cell_id[i] == g, coag_data.I)
+#         if grid_idx == nothing
+#             continue
+#         end
+#         grid_Ns = count(i -> droplets.cell_id[i] == g, coag_data.I)
+#         pair_idx_start = div(grid_idx, 2) + 1
+#         pair_idx_end = pair_idx_start + div(grid_Ns-1, 2) - 1
+        
+#         #find first empty pair in L:
+#         first_empty_pair_idx = findfirst(i -> L[i] == nothing, 1:length(L))
+#         #fill L with pairs of droplets in the grid
+#         for i in 0:div(grid_Ns-1, 2)-1
+#             L[first_empty_pair_idx + i] = (coag_data.I[grid_idx + 2*i - 1], coag_data.I[grid_idx + 2*i])
+#         end
+
+#         # fill scale for index grid_idx/2 to grid_idx/2 + grid_num//2 with the appropriate value
+#         coag_data.scale[first_empty_pair_idx:pair_idx_end] .= div(grid_Ns * (grid_Ns - 1) , 2) / div(grid_Ns , 2)
+
+#     end
+
+
+#     compute_pαdt!(L, droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
+
+#     rand!(coag_data.ϕ)
+
+#     test_pairs!(run,L,droplets,coag_data)
+
+#     return nothing
+# end
+
 #totally rework
 function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
     coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
     
-    N_grids = length(coag_data.N_in_cell)
+    # N_grids = coag_data.Ngrids
     Ns = settings.Ns
-    shuffle!(coag_data.I)
-    #sort by cell id
+    coag_data.first_in_pair .= false
     sort!(coag_data.I, by = i -> droplets.cell_id[i])
-    #if there are d
-    coag_data.scale.= 0
+    # droplets.grid_range .= [findfirst(i -> droplets.cell_id[i] == g, coag_data.I) : findlast(i -> droplets.cell_id[i] == g, coag_data.I) for g in 1:coag_data.Ngrids]
 
-    for g in 1:N_grids
-        #find the number of droplets in the grid
-        grid_idx = findfirst(i -> droplets.cell_id[i] == g, coag_data.I)
-        if grid_idx == nothing
+    for g in eachindex(droplets.grid_range)
+        start = findfirst(i -> droplets.cell_id[i] == g, coag_data.I) 
+        if start == nothing
             continue
         end
-        grid_Ns = count(i -> droplets.cell_id[i] == g, coag_data.I)
-        pair_idx_start = div(grid_idx, 2) + 1
-        pair_idx_end = pair_idx_start + div(grid_Ns-1, 2) - 1
-        
-        if grid_Ns%2 != 0
-            #move the grid_idx-1 index of I to the end of I and move the rest up by one
-            coag_data.I .= vcat(coag_data.I[1:grid_idx-1], coag_data.I[grid_idx+1:end], coag_data.I[grid_idx])
-        end
-
-        # fill scale for index grid_idx/2 to grid_idx/2 + grid_num//2 with the appropriate value
-        coag_data.scale[pair_idx_start:pair_idx_end] .= div(grid_Ns * (grid_Ns - 1) , 2) / div(grid_Ns , 2)
+        droplets.grid_range[g] = start:findlast(i -> droplets.cell_id[i] == g, coag_data.I)
+        coag_data.I[droplets.grid_range[g]] .= shuffle(coag_data.I[droplets.grid_range[g]]) 
+        coag_data.first_in_pair[(droplets.grid_range[g])[1:2:end-1]] .= true
 
     end
 
-    L = [(coag_data.I[l-1], coag_data.I[l]) for l in 2:2:Ns]
+    map(i -> sdm_step!(i,droplets,coag_data,settings.kernel, settings), 1:Ns)
 
-    compute_pαdt!(L, droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
+    # compute_pαdt!(droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
 
-    rand!(coag_data.ϕ)
+    # rand!(coag_data.ϕ)
 
-    test_pairs!(run,L,droplets,coag_data)
+    # test_pairs!(run,L,droplets,coag_data)
 
     return nothing
 end

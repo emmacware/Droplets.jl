@@ -27,8 +27,8 @@ end
 
 # Diagnostics Struct
 Base.@kwdef struct diagnostic_settings{FT<:AbstractFloat}
-    aerosol_cloud_cuttoff::FT = 1e-6
-    cloud_rain_cuttoff::FT = 40e-6
+    aerosol_cloud_cuttoff::FT = radius_to_volume(1e-6)
+    cloud_rain_cuttoff::FT = radius_to_volume(40e-6)
 end
 
 Base.@kwdef struct scm_settings{FT<:AbstractFloat}

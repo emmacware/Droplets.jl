@@ -10,10 +10,10 @@ function sd_fill_LWC(k::Int,sd::droplet_attributes{FT}, scm_grid,spatial::spatia
         scm_grid.diagnostics.aerosol_LWC[k] = sum(sd.X[aerosol_grid_idxs] .* sd.ξ[aerosol_grid_idxs])
     end
     if !isempty(cloud_grid_idxs)
-        scm_grid.diagnostics.cloud_LWC[k] = sum(sd.X[cloud_grid_idxs].* sd.ξ[aerosol_grid_idxs])
+        scm_grid.diagnostics.cloud_LWC[k] = sum(sd.X[cloud_grid_idxs].* sd.ξ[cloud_grid_idxs])
     end
     if !isempty(rain_grid_idxs)
-        scm_grid.diagnostics.rain_LWC[k] = sum(sd.X[rain_grid_idxs] .* sd.ξ[aerosol_grid_idxs])
+        scm_grid.diagnostics.rain_LWC[k] = sum(sd.X[rain_grid_idxs] .* sd.ξ[rain_grid_idxs])
     end 
 
     gridcell_volume = spatial.area_per_grid * spatial.z_grid_height
