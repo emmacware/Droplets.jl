@@ -83,12 +83,12 @@ for k in 1:nz
 end
 
 
-for i in 1:2
-    if i % 1 == 0
-        println("Timestep: ", i)
-    end
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
-end
+# for i in 1:2
+#     if i % 1 == 0
+#         println("Timestep: ", i)
+#     end
+#     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
+#     coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
+# end
 
 plot_env_profiles(grid)
