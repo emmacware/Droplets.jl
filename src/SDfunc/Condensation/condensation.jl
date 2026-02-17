@@ -9,7 +9,11 @@ export set_X_crit!,find_equilibrium_radius
 export dM_dt
 export drkappakohler
 export v_term #move 
+<<<<<<< HEAD
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
+=======
+export condensation_rhs!, condensation_rhs_single_cell
+>>>>>>> 1259ef28 (fix coalescence, debug condensation)
 
 ######################################################################
 # 
@@ -117,7 +121,11 @@ function drkappakohler(R,dry_r3,kappa,T,Senv, timestep)
     # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
     
+<<<<<<< HEAD
     return R + dr * timestep > 0 ? dr : -R / timestep
+=======
+    return dr #R + dr * timestep > 0 ? dr : -R / timestep
+>>>>>>> 1259ef28 (fix coalescence, debug condensation)
 end
 
 
@@ -435,12 +443,12 @@ end
 
 function condensation_rhs!(du, u, p, t)
     du .= 0#zero.(u)  # Initialize du to zero, preserving the structure and types of u
-    FT = eltype(u.R2)
-    R2 = u.R2
+    FT = eltype(u.lnR)
+    lnR = u.lnR
     qvap_col = u.qvap
     T_col = u.T
     nz,drops,grid,constants,condsettings,spatialsettings = p
-    R = sqrt.(R2)
+    R = exp.(lnR)
     T_v = T_virtual.(T_col, qvap_col)
     Rd = constants.Rd
     gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
@@ -461,13 +469,18 @@ function condensation_rhs!(du, u, p, t)
             dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
             dT = - dqvap * constants.L / constants.Cp_air
 
+<<<<<<< HEAD
             du.R2[R_idx] .= FT.(dR .* 2 .* R[R_idx])
+=======
+            du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
+>>>>>>> 1259ef28 (fix coalescence, debug condensation)
             du.qvap[k] = FT(dqvap)
             du.T[k] = FT(dT)
         end
     end
 end
 
+<<<<<<< HEAD
 # function condensation_rhs_single_cell(du, u, p, t)
 #     du .= 0  # Initialize du to zero, preserving the structure and types of u
 #     FT = eltype(u.lnR)
@@ -549,3 +562,39 @@ function condensation_rhs_single_droplet(du, u, p, t)
     du[1] = dR / R  # d(ln(R))/dt = dR/R, no type conversion
     return nothing
 end
+=======
+function condensation_rhs_single_cell(du, u, p, t)
+    du .= 0  # Initialize du to zero, preserving the structure and types of u
+    FT = eltype(u.lnR)
+    k,drops,grid,constants,condsettings,spatialsettings = p
+    lnR = u.lnR
+    qv = u.qvap[k]
+    T = u.T[k]
+    
+    
+    Tv = T_virtual.(T, qv)
+    Rd = constants.Rd
+    gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
+    P::FT = grid.P[k]
+    R_idx = findall(drops.cell_id .== k)
+    R = exp.(lnR[R_idx])
+
+
+    ρ_air::FT = P / Rd / Tv
+    S_env::FT = sat(qv, P) / esat(T)
+
+    if !isempty(R_idx)
+        dR = drkappakohler.(R,drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
+        dX = 4 * π .* R.^2 .* dR
+
+        dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
+        dT = - dqvap * constants.L / constants.Cp_air
+
+        du.lnR[R_idx] .= FT.(dR ./ R)
+        du.qvap[k] = FT(dqvap)
+        du.T[k] = FT(dT)
+    end
+
+end
+# end
+>>>>>>> 1259ef28 (fix coalescence, debug condensation)
