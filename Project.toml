@@ -1,20 +1,28 @@
 name = "Droplets"
 uuid = "410e754a-0d3e-432f-bd69-cc9df980427a"
-authors = ["Emma Ware", "Obin Sturm", "Adele Igel"]
 version = "0.1.0-DEV"
+authors = ["Emma Ware", "Obin Sturm", "Adele Igel"]
 
 [deps]
 CPUTime = "a9c8d775-2e2e-55fc-8582-045d282d599e"
 Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+DifferentialEquations = "0c46a032-eb83-5123-abaf-570d42b7fbaa"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+RRTMGP = "a01a1ee8-cea4-48fc-987c-fc7878d79da1"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+SymbolServer = "cf896787-08d5-524d-9de7-132aaa0cb996"
 
 [compat]
+DifferentialEquations = "7.17.0"
+NCDatasets = "0.14.11"
+RRTMGP = "0.21.7"
 SpecialFunctions = "2.5.1"
 StaticArrays = "1.9.13"
+SymbolServer = "8.0.1"
 julia = "1.6.7"
 
 [extras]
