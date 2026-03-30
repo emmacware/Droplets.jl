@@ -1,7 +1,19 @@
 using RRTMGP
 using NCDatasets
-
+using ClimaComms
+using RRTMGP: RRTMGPGridParams
+using RRTMGP.Vmrs
 using RRTMGP.LookUpTables
+using RRTMGP.AtmosphericStates
+using RRTMGP.Optics
+using RRTMGP.Sources
+using RRTMGP.BCs
+using RRTMGP.Fluxes
+using RRTMGP.AngularDiscretizations
+using RRTMGP.RTE
+using RRTMGP.RTESolver
+using RRTMGP.GrayUtils
+import RRTMGP.Parameters.RRTMGPParameters
 
 #these inputs have the same names as the scm.jl file so if you run that first you can
 #call this function without it needing to be part of the timestepper
@@ -25,14 +37,12 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
     θ, qv, T, P, ρ = grid.states.θ, grid.states.qv, grid.states.T, grid.states.P, grid.states.ρ
     # plot_env_profiles(grid) will plot these
 
-    #Liquid water diagnostics (cloud_, aerosol_, and rain_)
-    cloud_LWC = grid.diagnostics.cloud_LWC
-    cloud_effective_radius = grid.diagnostics.cloud_effective_radius
+    
 
-    lw_file = "/home/aigel/Droplets.jl/data/rrtmgp-data-lw-g256-2018-12-04.nc"
-    sw_file = "/home/aigel/Droplets.jl/data/rrtmgp-data-sw-g224-2018-12-04.nc"
-    lw_cld_file = "/home/aigel/Droplets.jl/data/rrtmgp-cloud-optics-coeffs-lw.nc"
-    sw_cld_file = "/home/aigel/Droplets.jl/data/rrtmgp-cloud-optics-coeffs-reordered-sw.nc"
+    lw_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-data-lw-g256-2018-12-04.nc"
+    sw_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-data-sw-g224-2018-12-04.nc"
+    lw_cld_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-clouds-lw-g256.nc"
+    sw_cld_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-clouds-sw-g224.nc"
 
     # reading longwave gas optics lookup data
     lookup_lw, idx_gases = Dataset(lw_file,"r") do ds 
@@ -40,7 +50,7 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
     end
     
      # reading longwave cloud lookup data ###missing diamice_lwr
-     lookup_lw_cld = Dataset(lw_cld_file, "r") do ds
+    lookup_lw_cld = Dataset(lw_cld_file, "r") do ds
         LookUpCld(ds, FT, DA)
     end
     #reading shortwave gas optics lookup data
@@ -52,10 +62,15 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
         LookUpCld(ds, FT, DA)
     end
 
+    #overrides = (; grav = 9.80665, molmass_dryair = 0.028964, molmass_water = 0.018016, 
+    #            gas_constant = 287.0, kappa_d = 0.28571428571, Stefan = 5.67e-8, avogad = 6.02214076e+23)
+    #param_set = RRTMGPParameters(FT,overrides)
+    param_set = RRTMGPParameters(9.80665, 0.028964, 0.018016, 287.0, 0.28571428571, 5.67e-8, 6.02214076e+23 )
 
     ########This part could be a separate function######
     deg2rad = FT(π) / FT(180)
     nlay = Nz
+    ncol = 1
     #ncol = Int(ds_in.dim["col"]) # col#1 repeated 128 times, per RRTMGP example
     nlev = nlay + 1
     ngas = LookUpTables.get_n_gases(lookup_lw)
@@ -64,42 +79,47 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
     #---no lat / long information for this
     lon = nothing
     lat = nothing
-    # The example only reads the first column and
-    # replicates it ncol times.
 
     sfc_emis = DA{FT, 1}(undef, nbnd_lw)
     sfc_alb_direct = DA{FT, 1}(undef, nbnd_sw)
     sfc_alb_diffuse = DA{FT, 1}(undef, nbnd_sw)
-    cos_zenith = DA{FT, 0}(undef)
-    irrad = DA{FT, 0}(undef)
+    cos_zenith = DA{FT, 1}(undef,ncol)
+    toa_flux = DA{FT, 1}(undef,ncol)
     # these values are taken from the example
     sfc_emis .= FT(0.98)
     sfc_alb_direct .= FT(0.06)
     sfc_alb_diffuse .= FT(0.06)
     cos_zenith .= FT(0.86)
-    irrad .= FT(lookup_sw.solar_src_tot)
+    toa_flux .= FT(lookup_sw.solar_src_tot)
 
 
-    p_lev = Array{FT}(reshape(Array(ds_in["p_lev"])[1, :], nlev, 1))
+    #p_lev = Array{FT}(reshape(Array(ds_in["p_lev"])[1, :], nlev, 1))
+    p_lay = Array{FT}(reshape(P,nlay,1))
 
-    bot_at_1 = p_lev[1, 1] > p_lev[end, 1]
+    bot_at_1 = p_lay[1, 1] > p_lay[end, 1]
     lev_ind = bot_at_1 ? (1:nlev) : (nlev:-1:1)
     lay_ind = bot_at_1 ? (1:nlay) : (nlay:-1:1)
 
-    p_lev = Array{FT}(reshape(Array(ds_in["p_lev"])[1, lev_ind], nlev, 1))
-    p_lay = Array{FT}(reshape(Array(ds_in["p_lay"])[1, lay_ind], nlay, 1))
-    t_lev = Array{FT}(reshape(Array(ds_in["t_lev"])[1, lev_ind], nlev, 1))
-    t_lay = Array{FT}(reshape(Array(ds_in["t_lay"])[1, lay_ind], nlay, 1))
+    p_lay = Array{FT}(p_lay[lay_ind])
+    p_lev = Array{FT}([P_surface;(p_lay[1:nlay-1]+p_lay[2:nlay])/2])
+    p_lev = Array{FT}([p_lev;2*p_lay[end]-p_lev[end]]) #could do logarithmic extrapolation instead
+    t_lay = Array{FT}(reshape(T[lay_ind],nlay,1))
+    t_lev = Array{FT}(t_lay[1:end-1]+t_lay[2:end])/2
+    t_lev = Array{FT}([t_lay[1]*2-t_lev[1];t_lev;t_lay[end]*2-t_lev[end]])
+
+    #p_lev = Array{FT}(reshape(Array(ds_in["p_lev"])[1, lev_ind], nlev, 1))
+    #p_lay = Array{FT}(reshape(Array(ds_in["p_lay"])[1, lay_ind], nlay, 1))
+    
     t_sfc = Array{FT}(reshape([t_lev[1, 1]], 1))
 
     #col_dry = DA{FT,2}(transpose(Array(ds_in["col_dry"])[:, lay_ind]))
     #col_dry from the dataset not used in the FORTRAN RRTMGP example
 
     # Reading volume mixing ratios
-    vmrat = zeros(FT, ngas, nlay)
+    vmrat = zeros(FT, ngas, nlay, 1)
 
-    vmrat[idx_gases["h2o"], :, 1] .= Array{FT}(Array(ds_in["h2o"])[1, lay_ind])
-    vmrat[idx_gases["o3"], :, 1] .= Array{FT}(Array(ds_in["o3"])[1, lay_ind])
+    vmrat[idx_gases["h2o"], :, 1] .= Array{FT}(reshape(qv[lay_ind] ,nlay,1))
+    vmrat[idx_gases["o3"], :, 1] .= FT(0) #no ozone    
     vmrat[idx_gases["co2"], :, 1] .= FT(348e-6)
     vmrat[idx_gases["ch4"], :, 1] .= FT(1650e-9)
     vmrat[idx_gases["n2o"], :, 1] .= FT(306e-9)
@@ -107,42 +127,45 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
     vmrat[idx_gases["o2"], :, 1] .= FT(0.2095)
     vmrat[idx_gases["co"], :, 1] .= FT(0)
 
-    for icol in 2:ncol
-        vmrat[:, :, icol] .= vmrat[:, :, 1]
-    end
+    #for icol in 2:ncol
+    #    vmrat[:, :, icol] .= vmrat[:, :, 1]
+    #end
     vmr = Vmr(DA(vmrat))
-    col_dry = DA{FT, 1}(undef, nlay)
-    rel_hum = DA{FT, 1}(undef, nlay)
-    vmr_h2o = view(vmr.vmr, idx_gases["h2o"], :, :)
+    col_dry = DA{FT, 2}(undef, nlay, 1)
+    rel_hum = DA{FT, 2}(undef, nlay, 1)
+    #vmr_h2o = view(vmr.vmr, idx_gases["h2o"], :, :)
+    vmr_h2o = reshape(vmrat[idx_gases["h2o"],:,1],:,1)
 
-    cld_frac = zeros(FT, nlay)
-    cld_mask_lw = zeros(Bool, nlay)
-    cld_mask_sw = zeros(Bool, nlay)
-    cld_r_eff_liq = zeros(FT, nlay)
-    cld_r_eff_ice = zeros(FT, nlay)
-    cld_path_liq = zeros(FT, nlay)
-    cld_path_ice = zeros(FT, nlay)
-
-    radliq_lwr, radliq_upr, radice_lwr, radice_upr = Array(lookup_lw_cld.bounds)
-    r_eff_liq = (radliq_lwr + radliq_upr) / FT(2)
-    r_eff_ice = (radice_lwr + radice_upr) / FT(2)
-
-    # Restrict clouds to troposphere (> 100 hPa = 100*100 Pa)
-    # and not very close to the ground (< 900 hPa), and
-    # put them in 2/3 of the columns since that's roughly the
-    # total cloudiness of earth
+    cld_frac = zeros(FT, nlay, 1)
+    cld_mask_lw = zeros(Bool, nlay, 1)
+    cld_mask_sw = zeros(Bool, nlay, 1)
+    cld_r_eff_liq = zeros(FT, nlay, 1)
+    cld_r_eff_ice = zeros(FT, nlay, 1)
+    cld_path_liq = zeros(FT, nlay, 1)
+    cld_path_ice = zeros(FT, nlay, 1)
+   
+    #Liquid water diagnostics (cloud_, aerosol_, and rain_)
+    cld_path_liq .= grid.diagnostics.cloud_LWC
+    cld_r_eff_liq .= grid.diagnostics.cloud_effective_radius
+    cld_frac[cld_path_liq.>0.0] .= 1.0
+    cld_mask_lw[cld_frac.==1] .= true
+    cld_mask_sw[cld_frac.==1] .= true
     
-    cld_path_liq[ilay, icol] = FT(10)
-    cld_r_eff_liq[ilay, icol] = r_eff_liq
+    radliq_lwr = lookup_lw_cld.bounds[1]
+    radliq_upr = lookup_lw_cld.bounds[2]
 
-    cld_path_ice[ilay, icol] = FT(10)
-    cld_r_eff_ice[ilay, icol] = r_eff_ice
- 
+    cld_r_eff_liq[cld_r_eff_liq .< radliq_lwr] .= radliq_lwr
+    cld_r_eff_liq[cld_r_eff_liq .> radliq_upr] .= radliq_upr
 
-    p_lay = DA(p_lay)
-    p_lev = DA(p_lev)
-    t_lay = DA(t_lay)
-    t_lev = DA(t_lev)
+    p_lay = Array{FT}(DA(p_lay))
+    p_lev = Array{FT}(DA(p_lev))
+    t_lay = Array{FT}(DA(t_lay))
+    t_lev = Array{FT}(DA(t_lev))
+
+    p_lay = reshape(p_lay,:,1)
+    p_lev = reshape(p_lev,:,1)
+    t_lay = reshape(t_lay,:,1)
+    t_lev = reshape(t_lev,:,1)
 
     device = ClimaComms.device(context)
     compute_col_gas!(device, p_lev, col_dry, param_set, vmr_h2o, lat) # the example skips lat based gravity calculation
@@ -164,23 +187,34 @@ function stand_in_radiation_update_function!(grid,spatialsettings, diagnosticset
     cld_path_liq = DA(cld_path_liq)
     cld_path_ice = DA(cld_path_ice)
     ice_rgh = 2 # medium ice roughness
+    cloud_state = CloudState(cld_r_eff_liq,cld_r_eff_ice,cld_path_liq,cld_path_ice,cld_frac,cld_mask_lw,cld_mask_sw,MaxRandomOverlap(),ice_rgh)
 
     grid_params = RRTMGPGridParams(FT; context, nlay, ncol)
 
     inc_flux = nothing
-    slv_lw = SLVLW(grid_params; params = param_set, sfc_emis, inc_flux)
+    slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
     # Setting up shortwave problem---------------------------------------
     inc_flux_diffuse = nothing
+
     swbcs = (; cos_zenith, toa_flux, sfc_alb_direct, inc_flux_diffuse, sfc_alb_diffuse)
-    slv_sw = SLVSW(grid_params; swbcs...)
+    slv_sw = TwoStreamSWRTE(grid_params; swbcs...)
     #------calling solvers
     metric_scaling = DA(one.(slv_sw.flux.flux_up))
+    as = AtmosphericState(lon, lat, layerdata, p_lev, t_lev, t_sfc, vmr, cloud_state, nothing)
     solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)
-    if device isa ClimaComms.CPUSingleThreaded
-        JET.@test_opt solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)
+    solve_sw!(slv_sw, as, lookup_sw, lookup_sw_cld, nothing, metric_scaling)
+
+    flux_net = slv_lw.flux.flux_net + slv_sw.flux.flux_net
+    cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
+    grav_ = FT(RRTMGP.Parameters.grav(param_set))
+    hr_lay = DA{FT}(undef, nlay, ncol)
+
+    compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
+    #if device isa ClimaComms.CPUSingleThreaded
+        #JET.@test_opt solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)
         #@test (@allocated solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)) == 0
-        @test (@allocated solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)) ≤ 448
-    end
+        #@test (@allocated solve_lw!(slv_lw, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)) ≤ 448
+    #end
 
     
     return
