@@ -59,6 +59,8 @@ mpdatasettings = mpdata_settings_1d(nz, vertical_boundary_condition=NoFlux())
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
 diagnosticsettings = diagnostic_settings()
 
+#Read Radiation Files 
+lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
 
 # Create environmnent
 grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, prescribed_v, prescribed_w)
@@ -81,12 +83,12 @@ for k in 1:nz
 end
 
 
-#for i in 1:2
-#    if i % 1 == 0
-#        println("Timestep: ", i)
-#    end
-#    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-#    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
-#end
+for i in 1:2
+    if i % 1 == 0
+        println("Timestep: ", i)
+    end
+    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
+    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
+end
 
 plot_env_profiles(grid)

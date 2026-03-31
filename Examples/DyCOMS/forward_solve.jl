@@ -16,13 +16,16 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 
-    stand_in_radiation_update_function!(grid,spatialsettings, diagnosticsettings, constants)
+    println("radiation")
+    flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
 
     #Update microphysics (condensation, coagulation)
+    println("microphysics")
     #condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings,spatialsettings)
     #coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
 
     #Droplet motion (advection and settling)
+    println("advection")
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
     
     # Environmental advection 
