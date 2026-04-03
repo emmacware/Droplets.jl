@@ -25,7 +25,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false,topcellreservoir=true)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -33,6 +33,10 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic
         kp,km = limit(vbc,k+1, nz), limit(vbc,k-1, nz)
         tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
         tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+    end
+    if topcellreservoir
+        tmp.ϕ[end] = 0.0
+        # tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
     end
 
     ϕ .+= tmp.ϕ
@@ -117,7 +121,7 @@ function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryC
     GCz_inside = tmp.GCz_step .+ 0
     nz = length(ϕ)
 
-    for k in 1:nz
+    for k in 1:nz-1
 
         kp = limit(vbc,k + 1, nz)
 

@@ -83,8 +83,8 @@ end
 function plot_env_profiles(grid)
     p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
     p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="q_v", legend=false)
-    p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
-    # p6 = plot((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
+    p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC+grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
+    # p6 = plot!((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
 
     p3 = plot(grid.states.P,grid.centers_z, ylabel="Height (m)", xlabel="Pressure (Pa)", title="P", legend=false)
     p4 = plot(grid.states.ρ,grid.centers_z, ylabel="Height (m)", xlabel="density (kg/m3)", title="ρ", label = "ρ")
@@ -97,12 +97,19 @@ end
 
 function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
     nz = grid.nz
-    lnR = log.(volume_to_radius.(drops.X))
-    Y = ComponentVector{FT}(lnR = lnR, qvap=grid.states.qv, T = grid.states.T)
-    p = (nz,drops, grid.states, constants, condensationsettings,spatialsettings)
-    condensation_prob = ODEProblem(condensation_rhs!, Y, (0.0, 1.0), p)
+    lnr = log.(volume_to_radius.(drops.X))
+    Y = [(lnr[1])]
+    p = (1,drops, grid.states, constants, condensationsettings,spatialsettings)
+    condensation_prob = ODEProblem(condensation_rhs_single_droplet, Y, (0.0, 0.01), p)
     # condensation_prob = ODEProblem(condensation_rhs_single_cell, Y, (0.0, 1.0), p)
 
-    condensation_integrator = init(condensation_prob, ImplicitEuler(), reltol = 1e-12, abstol = 1e-12)
+    condensation_integrator = init(condensation_prob, Rosenbrock23(), reltol = 1e-12, abstol = 1e-12)
     return condensation_integrator
 end
+
+
+# p = (1,droplets, grid.states, constants, condensationsettings,spatialsettings)
+
+# du = zeros(1)
+# u = [((volume_to_radius.(droplets.X))[1])^2]
+# condensation_rhs_single_droplet(du,u,p,0.0)

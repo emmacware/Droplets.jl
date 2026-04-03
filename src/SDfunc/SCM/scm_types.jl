@@ -6,6 +6,7 @@ struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     θ::Vector{FT}
     qv::Vector{FT}
     ρ::Vector{FT}
+    e::Vector{FT}   # turbulent kinetic energy (m²/s²)
 end
 
 struct scm_wind{FT<:AbstractFloat}
@@ -37,7 +38,7 @@ end
 function create_scm_grids(num_levels::Int, dz::FT) where {FT<:AbstractFloat}
     faces_z = collect(0:dz:(num_levels)*dz)
     centers_z = collect(dz/2:dz:((num_levels-1)*dz + dz/2))
-    states = scm_states{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),zeros(FT,num_levels))
+    states = scm_states{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels), fill(FT(1e-4), num_levels))
     wind = scm_wind{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels+1))
     diagnostics = scm_diagnostics{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),
         zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels))

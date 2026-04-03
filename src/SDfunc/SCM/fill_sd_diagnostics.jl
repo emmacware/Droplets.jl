@@ -43,6 +43,14 @@ function sd_fill_effective_radius(k::Int,sd::droplet_attributes{FT}, scm_grid,sp
 end
 
 function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid,spatial::spatial_settings_1d,diagnostic_settings::diagnostic_settings) where {FT<:AbstractFloat}
+    #set to zero before filling
+        scm_grid.diagnostics.aerosol_LWC .= 0.0
+        scm_grid.diagnostics.cloud_LWC .= 0.0
+        scm_grid.diagnostics.rain_LWC .= 0.0
+    
+        scm_grid.diagnostics.aerosol_effective_radius .= 0.0
+        scm_grid.diagnostics.cloud_effective_radius .= 0.0
+        scm_grid.diagnostics.rain_effective_radius .= 0.0
     for k in 1:spatial.Nz
         sd_fill_LWC(k,sd, scm_grid,spatial, diagnostic_settings)
         sd_fill_effective_radius(k,sd, scm_grid,spatial, diagnostic_settings)

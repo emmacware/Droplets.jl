@@ -47,7 +47,7 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     ϵ = FT(1.6080793637401138)           # molar mass ratio air and vapor
 end
 
-const constants = Constants{Float32}()
+const constants = Constants{Float64}()
 
 #Conversions
 const kg_to_g = 1e3

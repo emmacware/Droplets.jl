@@ -5,11 +5,11 @@
 export esat,sat,drdtcondensation1,drdtcondensation2,drdtcondensation3#,condense_and_calc_Sv!
 export FK,FD,drkohler,θcondenseupdate!,qvcondenseupdate!,dXkohler_function_of_radius
 export dXkohler_function_of_radius_activated,drkohler_activated
-export set_X_crit!
+export set_X_crit!,find_equilibrium_radius
 export dM_dt
 export drkappakohler
 export v_term #move 
-export condensation_rhs!, condensation_rhs_single_cell
+export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
 
 ######################################################################
 # 
@@ -117,7 +117,7 @@ function drkappakohler(R,dry_r3,kappa,T,Senv, timestep)
     # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
     
-    return dr #R + dr * timestep > 0 ? dr : -R / timestep
+    return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 
@@ -388,19 +388,59 @@ function set_X_crit!(droplets,i,kappa,T)
     b = kappa * droplets.dry_r3[i]
     a = akk(T)
     R_crit = sqrt(3 * b / a) / 2
-    droplets.X[i] = radius_to_volume(R_crit)  # Convert radius to volume
+    droplets.X[i] = 0.98 * radius_to_volume(R_crit)  # Convert radius to volume
+end
+
+function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=100, tol=1e-12)
+    println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
+    dry_r3 = droplets.dry_r3[drop_idx]
+    dry_r = (dry_r3)^(1/3)
+    R_guess = max(dry_r * 2, 1e-8)
+    
+    for i in 1:max_iter
+        
+        kelvin_term = akk(T) / R_guess
+        kappa_term = kappa * dry_r3 / (R_guess^3)
+        
+
+        f = S_env - 1.0 - kelvin_term + kappa_term
+        
+        if abs(f) < tol
+            droplets.X[drop_idx] = radius_to_volume(R_guess)
+            println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
+            return
+        end
+
+        dS_dR = (-kelvin_term/R_guess + 3*kappa_term/R_guess)
+        R_new = R_guess - f / dS_dR
+          
+        R_new = max(R_new, dry_r * 1.01)  # Must be larger than dry radius
+        R_new = min(R_new, 1e-3)          # Cap at 1mm
+        
+        if abs(R_new - R_guess) < tol
+            droplets.X[drop_idx] = radius_to_volume(R_new)
+            println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
+            return
+        end
+        
+        R_guess = R_new
+    end
+    
+    @warn "Equilibrium radius did not converge for S_env=$S_env, T=$T"
+    # droplets.X[i] = radius_to_volume(dry_r)
+    return
 end
 
 
 
 function condensation_rhs!(du, u, p, t)
     du .= 0#zero.(u)  # Initialize du to zero, preserving the structure and types of u
-    FT = eltype(u.lnR)
-    lnR = u.lnR
+    FT = eltype(u.R2)
+    R2 = u.R2
     qvap_col = u.qvap
     T_col = u.T
     nz,drops,grid,constants,condsettings,spatialsettings = p
-    R = exp.(lnR)
+    R = sqrt.(R2)
     T_v = T_virtual.(T_col, qvap_col)
     Rd = constants.Rd
     gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
@@ -421,44 +461,91 @@ function condensation_rhs!(du, u, p, t)
             dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
             dT = - dqvap * constants.L / constants.Cp_air
 
-            du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
+            du.R2[R_idx] .= FT.(dR .* 2 .* R[R_idx])
             du.qvap[k] = FT(dqvap)
             du.T[k] = FT(dT)
         end
     end
 end
 
-function condensation_rhs_single_cell(du, u, p, t)
-    du .= 0  # Initialize du to zero, preserving the structure and types of u
-    FT = eltype(u.lnR)
-    k,drops,grid,constants,condsettings,spatialsettings = p
-    lnR = u.lnR
-    qv = u.qvap[k]
-    T = u.T[k]
+# function condensation_rhs_single_cell(du, u, p, t)
+#     du .= 0  # Initialize du to zero, preserving the structure and types of u
+#     FT = eltype(u.lnR)
+#     k,drops,grid,constants,condsettings,spatialsettings = p
+#     lnR = u.lnR
+#     qv = u.qvap[k]
+#     T = u.T[k]
     
     
-    Tv = T_virtual.(T, qv)
-    Rd = constants.Rd
-    gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
-    P::FT = grid.P[k]
-    R_idx = findall(drops.cell_id .== k)
-    R = exp.(lnR[R_idx])
+#     Tv = T_virtual.(T, qv)
+#     Rd = constants.Rd
+#     gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
+#     P::FT = grid.P[k]
+#     R_idx = findall(drops.cell_id .== k)
+#     R = exp.(lnR[R_idx])
 
 
-    ρ_air::FT = P / Rd / Tv
-    S_env::FT = sat(qv, P) / esat(T)
+#     ρ_air::FT = P / Rd / Tv
+#     S_env::FT = sat(qv, P) / esat(T)
 
-    if !isempty(R_idx)
-        dR = drkappakohler.(R,drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
-        dX = 4 * π .* R.^2 .* dR
+#     if !isempty(R_idx)
+#         dR = drkappakohler.(R,drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
+#         dX = 4 * π .* R.^2 .* dR
 
-        dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
-        dT = - dqvap * constants.L / constants.Cp_air
+#         dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
+#         dT = - dqvap * constants.L / constants.Cp_air
 
-        du.lnR[R_idx] .= FT.(dR ./ R)
-        du.qvap[k] = FT(dqvap)
-        du.T[k] = FT(dT)
-    end
+#         du.lnR[R_idx] .= FT.(dR ./ R)
+#         du.qvap[k] = FT(dqvap)
+#         du.T[k] = FT(dT)
+#     end
 
-end
 # end
+# # end
+
+
+# function condensation_rhs_single_droplet(du, u, p, t)
+#     du .= 0  # Initialize du to zero, preserving the structure and types of u
+#     FT = eltype(u)
+#     k,drops,grid,constants,condsettings,spatialsettings = p
+#     # R = sqrt(u[1])
+#     R = exp(u[1])
+#     cell = drops.cell_id[k]
+#     # if cell < 1
+#     #     return FT(0)
+#     # end
+#     qv = grid.qv[cell]
+#     T = grid.T[cell]
+    
+#     Tv = T_virtual(T, qv)
+#     Rd = constants.Rd
+#     P = grid.P[cell]
+
+#     S_env = sat(qv, P) / esat(T)
+
+#     dR = drkappakohler(R,drops.dry_r3[k],condsettings.kappa,T,S_env, t)
+#     du[1] = dR / R
+#     return nothing
+# end
+# end
+
+function condensation_rhs_single_droplet(du, u, p, t)
+    du[1] = zero(eltype(u))  # Use zero() instead of 0
+    k, drops, grid, constants, condsettings, spatialsettings = p
+    
+    cell = drops.cell_id[k]
+    if cell < 1 || cell > length(grid.qv)
+        return nothing
+    end
+    
+    R = exp(u[1])  # Don't convert to FT
+    qv = grid.qv[cell]
+    T = grid.T[cell] 
+    P = grid.P[cell]
+    
+    S_env = sat(qv, P) / esat(T)
+    dR = drkappakohler(R, drops.dry_r3[k], condsettings.kappa, T, S_env, t)
+    
+    du[1] = dR / R  # d(ln(R))/dt = dR/R, no type conversion
+    return nothing
+end
