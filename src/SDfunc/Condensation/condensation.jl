@@ -426,7 +426,7 @@ function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=10
         R_guess = R_new
     end
     
-    @warn "Equilibrium radius did not converge for S_env=$S_env, T=$T"
+    # @warn "Equilibrium radius did not converge for S_env=$S_env, T=$T"
     # droplets.X[i] = radius_to_volume(dry_r)
     return
 end

@@ -191,15 +191,19 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
     # N_grids = coag_data.Ngrids
     Ns = settings.Ns
     coag_data.first_in_pair .= false
-    sort!(coag_data.I, by = i -> droplets.cell_id[i])
+    # sort!(coag_data.I, by = i -> droplets.cell_id[i])
     # droplets.grid_range .= [findfirst(i -> droplets.cell_id[i] == g, coag_data.I) : findlast(i -> droplets.cell_id[i] == g, coag_data.I) for g in 1:coag_data.Ngrids]
 
     for g in eachindex(droplets.grid_range)
-        start = findfirst(i -> droplets.cell_id[i] == g, coag_data.I) 
-        if start == nothing
+        if droplets.grid_range[g] == nothing
             continue
         end
-        droplets.grid_range[g] = start:findlast(i -> droplets.cell_id[i] == g, coag_data.I)
+        # start = findfirst(i -> droplets.cell_id[i] == g, coag_data.I) 
+        # if start == nothing
+        #     droplets.grid_range[g] = nothing
+        #     continue
+        # end
+        # droplets.grid_range[g] = start:findlast(i -> droplets.cell_id[i] == g, coag_data.I)
         coag_data.I[droplets.grid_range[g]] .= shuffle(coag_data.I[droplets.grid_range[g]]) 
         coag_data.first_in_pair[(droplets.grid_range[g])[1:2:end-1]] .= true
 
