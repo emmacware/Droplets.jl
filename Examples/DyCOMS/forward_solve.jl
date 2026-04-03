@@ -8,7 +8,8 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         diagnosticsettings::diagnostic_settings{FT},
         prescribed_w::Function, mpdata_tmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
         constants,
-        scmsettings::scm_settings{FT}
+        scmsettings::scm_settings{FT},
+        tkesettings::tke_settings{FT},
 
     ) where {FT<:AbstractFloat}
     
@@ -20,12 +21,12 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
 
     #Update microphysics (condensation, coagulation)
-    println("microphysics")
-    #condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings,spatialsettings)
-    #coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
-
+    for t_cond in 1:100
+        # println("Condensation substep: ", t_cond)
+        condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings)
+    end
+    coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
     #Droplet motion (advection and settling)
-    println("advection")
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
     
     # Environmental advection 
@@ -34,6 +35,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     #surface forcings
     update_surface_forcings!(grid, constants, scmsettings)
 
+
     return nothing
 end
 
@@ -41,31 +43,49 @@ end
 function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings)
     # Calculate the condensation time step for each droplet
     # droplets.X
-    lnR = log.(volume_to_radius.(droplets.X))
+    # lnr = log.((volume_to_radius.(droplets.X)))
+    Ns = length(droplets.X)
+    FT = eltype(droplets.X)
 
-    condensation.u.lnR .= lnR
-    condensation.u.qvap .= state.qv
-    condensation.u.T .= state.T
-    # for k in 1:nz
-    #     println("Condensation timestep for grid cell ", k)
-    #     condensation.p = (k,droplets, state, constants, condsettings, spatialsettings)
+    
+    mass_change = zeros(FT, nz)
 
+    for k in 1:Ns
+        z = droplets.cell_id[k]
+        if z < 1
+            continue
+        end
         
-    #     step!(condensation, Δtg, true)
-    # end
-    condensation.p = (nz,droplets, state, constants, condsettings, spatialsettings)
+        R = volume_to_radius(droplets.X[k])
+        T_k = state.T[z]
+        qv_k = state.qv[z]
+        P_k = state.P[z]
 
-        
-    step!(condensation, Δtg, true)
+        S_env = sat(qv_k, P_k) / esat(T_k)
+        dR = drkappakohler(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg)
+        dX = (4 * pi * R^2 * dR) * Δtg
+        if droplets.X[k] + dX < 0
+            dX = -droplets.X[k] + radius_to_volume((droplets.dry_r3[k])^(1/3))  # prevent negative mass
+        end
 
-    droplets.X .= radius_to_volume.(exp.(condensation.u.lnR))
-    state.qv .= condensation.u.qvap
-    state.T .= condensation.u.T
+        mass_change[z] += dX * droplets.ξ[k]
+        droplets.X[k] += dX
+
+
+
+        # mass_change[z] += (radius_to_volume(exp(final_lnr)) - droplets.X[k]) * droplets.ξ[k]
+        # droplets.X[k] = radius_to_volume(exp(final_lnr))
+    end
+    
+    dqvap = - mass_change .* constants.ρl ./ (state.ρ .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
+    state.qv .+= dqvap
+    state.T .-= dqvap * constants.L ./ (constants.Cp_air)
     state.θ .= theta_from_T(state.T, state.P, constants)
     state.ρ .= ρ_ideal_gas(state.P, state.T, state.qv, constants)
 
     return
 end
+
 
 
 function update_surface_forcings!(grid, constants, scmsettings)

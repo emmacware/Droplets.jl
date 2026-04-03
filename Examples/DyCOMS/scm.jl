@@ -1,13 +1,16 @@
-
 using Droplets
-using DifferentialEquations
+# using DifferentialEquations
+using OrdinaryDiffEq
+
 using Plots
 using ComponentArrays
-using LSODA
+# using OrdinaryDiffEqBDF
 include("initial_state_functions.jl")
 include("forward_solve.jl")
 include("radiation_call.jl")
 FT = Float64
+
+
 
 
 
@@ -57,10 +60,13 @@ coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_p
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
 mpdatasettings = mpdata_settings_1d(nz, vertical_boundary_condition=NoFlux())
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
+tkesettings = tke_settings{FT}(u_star=u_star)
 diagnosticsettings = diagnostic_settings()
+
 
 #Read Radiation Files 
 lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
+
 
 # Create environmnent
 grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, prescribed_v, prescribed_w)
@@ -74,21 +80,36 @@ droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialse
 coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)
 condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
 mpdata_tmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
+Xinit= droplets.X .+ 0
 
+#set to eq radius
+for k in range(1,nz)
+    drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
 
-#set to critical radius to begin, need to change to eq radius
-for k in 1:nz
-    drop_idx = coagdata.I[droplets.grid_range[k]]
-    set_X_crit!.(droplets,drop_idx,kappa_ammonium_sulfate,grid.states.T[k])
+    T = grid.states.T[k]
+    qv_k = grid.states.qv[k]
+    P_k = grid.states.P[k]
+    S_env = sat(qv_k,P_k)/esat(T)
+    if S_env > 0.95
+        S_env = 0.95
+    end
+    # println(S_env)
+    find_equilibrium_radius.(droplets,drop_idx, kappa_ammonium_sulfate, T, S_env)
+    
+end
+sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
+plot_env_profiles(grid)
+
+for i in 1:2
+    if i % 1 == 0
+        println("Timestep: ", i)
+    end
+    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
+    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings)
 end
 
-
-# for i in 1:2
-#     if i % 1 == 0
-#         println("Timestep: ", i)
-#     end
-#     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-#     coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
-# end
-
 plot_env_profiles(grid)
+
+# savefig("scm_profiles_10min.png")
+
+# scatter(Xinit, droplets.X, label="Final Volume")
