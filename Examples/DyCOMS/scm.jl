@@ -100,7 +100,7 @@ end
 sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 plot_env_profiles(grid)
 
-for i in 1:10
+for i in 1:60
     if i % 1 == 0
         println("Timestep: ", i)
     end

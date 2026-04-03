@@ -18,7 +18,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 
     println("radiation")
-    # flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
+    flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
 
     #Update microphysics (condensation, coagulation)
     for t_cond in 1:100
@@ -29,6 +29,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     #Droplet motion (advection and settling)
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
 
+    #change sorting indexes if droplets moved
     coagdata.I .= sort(coagdata.I, by = i -> droplets.cell_id[i])
     for g in eachindex(droplets.grid_range)
         start = findfirst(i -> droplets.cell_id[i] == g, coagdata.I) 
@@ -41,6 +42,8 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     
     # Environmental advection 
     mpdata_scm!(grid, dt, mpdata_tmp, mpdatasettings,constants)
+    tke_timestep!(grid, tkesettings, constants, dt)
+    turbulent_droplet_diffusion!(droplets, grid, tkesettings, dt)
 
     #surface forcings
     update_surface_forcings!(grid, constants, scmsettings)

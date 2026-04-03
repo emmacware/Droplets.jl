@@ -221,7 +221,10 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
    
-    #grid.states.T += hr_lay[:,1] * dt 
+    grid.states.T .+= hr_lay[:,1] * dt 
+    grid.states.θ .= theta_from_T(grid.states.T, grid.states.P, constants)
+    grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
+    
     ###Add in other updates
     
     flux_net_droplet = zeros(FT,nlay,n_bnd)
