@@ -277,6 +277,9 @@ end
 
 @inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     cell = droplets.cell_id[j]
+    if droplets.grid_range[cell] == nothing
+        return nothing
+    end
     Ns_c = length(droplets.grid_range[cell])
     scale = Ns_c * (Ns_c - 1) / div(Ns_c, 2)
     pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV

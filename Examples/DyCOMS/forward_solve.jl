@@ -63,10 +63,11 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
     mass_change = zeros(FT, nz)
 
     for z in 1:nz
-        k = coagdata.I[droplets.grid_range[z]]
-        if k == nothing
+        if droplets.grid_range[z] == nothing
             continue
         end
+        k = coagdata.I[droplets.grid_range[z]]
+
         R = volume_to_radius.(droplets.X[k])
         T_k = state.T[z]
         qv_k = state.qv[z]
