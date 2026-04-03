@@ -25,10 +25,10 @@ function read_radiation_tables()
     device = ClimaComms.device(context)
     DA = ClimaComms.array_type(device)
 
-    lw_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-data-lw-g256-2018-12-04.nc"
-    sw_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-data-sw-g224-2018-12-04.nc"
-    lw_cld_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-clouds-lw-g256.nc"
-    sw_cld_file = "C:/Users/aigel/Documents/Droplets.jl/data/rrtmgp-clouds-sw-g224.nc"
+    lw_file = "../../data/rrtmgp-data-lw-g256-2018-12-04.nc"
+    sw_file = "../..//data/rrtmgp-data-sw-g224-2018-12-04.nc"
+    lw_cld_file = "../../data/rrtmgp-clouds-lw-g256.nc"
+    sw_cld_file = "../../data/rrtmgp-clouds-sw-g224.nc"
 
     # reading longwave gas optics lookup data
     lookup_lw, idx_gases = Dataset(lw_file,"r") do ds 
