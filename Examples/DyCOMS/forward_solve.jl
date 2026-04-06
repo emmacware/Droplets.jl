@@ -21,10 +21,14 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
 
     #Update microphysics (condensation, coagulation)
+<<<<<<< HEAD
     for t_cond in 1:100
         # println("Condensation substep: ", t_cond)
         condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings,coagdata)
     end
+=======
+    condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings,spatialsettings)
+>>>>>>> 1259ef2 (fix coalescence, debug condensation)
     coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
     #Droplet motion (advection and settling)
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
@@ -53,6 +57,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 end
 
 
+<<<<<<< HEAD
 
 function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings,coagdata)
     # Calculate condensation time step for each droplet
@@ -61,6 +66,27 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
 
     
     mass_change = zeros(FT, nz)
+=======
+function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings)
+    # Calculate the condensation time step for each droplet
+    # droplets.X
+    lnR = log.(volume_to_radius.(droplets.X))
+
+    condensation.u.lnR .= lnR
+    condensation.u.qvap .= state.qv
+    condensation.u.T .= state.T
+    # for k in 1:nz
+    #     println("Condensation timestep for grid cell ", k)
+    #     condensation.p = (k,droplets, state, constants, condsettings, spatialsettings)
+
+        
+    #     step!(condensation, Δtg, true)
+    # end
+    condensation.p = (nz,droplets, state, constants, condsettings, spatialsettings)
+
+        
+    step!(condensation, Δtg, true)
+>>>>>>> 1259ef2 (fix coalescence, debug condensation)
 
     for z in 1:nz
         if droplets.grid_range[z] == nothing
@@ -93,7 +119,10 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
 end
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1259ef2 (fix coalescence, debug condensation)
 function update_surface_forcings!(grid, constants, scmsettings)
     grid.states.T[1] += scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz)
     grid.states.θ[1] = theta_from_T(grid.states.T[1], grid.states.P[1], constants)

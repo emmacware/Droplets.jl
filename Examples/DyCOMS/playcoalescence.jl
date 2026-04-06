@@ -1,21 +1,11 @@
-
 using Droplets
-# using DifferentialEquations
-using OrdinaryDiffEq
-
+using DifferentialEquations
 using Plots
 using ComponentArrays
-<<<<<<< HEAD
-# using OrdinaryDiffEqBDF
-=======
-using LSODA
->>>>>>> 1259ef2 (fix coalescence, debug condensation)
 include("initial_state_functions.jl")
 include("forward_solve.jl")
 include("radiation_call.jl")
 FT = Float64
-
-
 
 
 
@@ -24,7 +14,7 @@ Z_max = 1500.0 #m
 dz = 10.0 #m
 nz = Int(Z_max/dz)
 dt = 1.0 #s
-Ns_per_grid = 16
+Ns_per_grid = 20
 seed = 30
 
 
@@ -37,9 +27,9 @@ inv_height = 795.0  # m
 ρ_inv = 1.12 # kg/m^3, air density @ inversion height
 D = 3.75e-6 # s^-1, constant Divergence
 u_star = 0.25 # m/s, friction velocity
-prescribed_u(z) = 3 + 4*(z/1000) # m/s
+prescribed_u(z::FT)::FT = 3 + 4*(z/1000) # m/s
 prescribed_v(z) = -9 + 5.6*z/1000        # m/s
-prescribed_w(z) = min(-D*z,0) # m/s
+prescribed_w(z::FT)::FT = min(-D*z,0) # m/s
 θl(z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
 qt(z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
 surface_latent_heat_flux = 93 # W/m^2
@@ -65,12 +55,7 @@ coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_p
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
 mpdatasettings = mpdata_settings_1d(nz, vertical_boundary_condition=NoFlux())
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
-tkesettings = tke_settings{FT}(u_star=u_star)
 diagnosticsettings = diagnostic_settings()
-
-
-#Read Radiation Files 
-lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
 
 
 # Create environmnent
@@ -80,60 +65,23 @@ grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, pres
 # Create superdroplets
 droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialsettings)
 
-
 # Create other needed data structures
 coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)
-condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
+condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, constants)
 mpdata_tmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
-Xinit= droplets.X .+ 0
 
-#set to eq radius
-for k in range(1,nz)
-    drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
 
-<<<<<<< HEAD
-    T = grid.states.T[k]
-    qv_k = grid.states.qv[k]
-    P_k = grid.states.P[k]
-    S_env = sat(qv_k,P_k)/esat(T)
-    if S_env > 0.95
-        S_env = 0.95
-    end
-    # println(S_env)
-    find_equilibrium_radius.(droplets,drop_idx, kappa_ammonium_sulfate, T, S_env)
+@btime coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
+
+
+#     #Update microphysics (condensation, coagulation)
+# # @btime condensation_time_step_spatial!(droplets, grid.states,nz, dt, condensation_integrator, constants,condensationsettings)
+
+#     #Droplet motion (advection and settling)
+@btime update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
     
-end
-sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
-plot_env_profiles(grid)
+#     # Environmental advection 
+@btime mpdata_scm!(grid, dt, mpdata_tmp, mpdatasettings,constants)
 
-for i in 1:60
-    if i % 1 == 0
-        println("Timestep: ", i)
-    end
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings)
-end
-
-plot_env_profiles(grid)
-
-# savefig("scm_profiles_10min.png")
-
-# scatter(Xinit, droplets.X, label="Final Volume")
-=======
-#set to critical radius to begin, need to change to eq radius
-for k in 1:nz
-    drop_idx = coagdata.I[droplets.grid_range[k]]
-    set_X_crit!.(droplets,drop_idx,kappa_ammonium_sulfate,grid.states.T[k])
-end
-
-
-# for i in 1:2
-#     if i % 1 == 0
-#         println("Timestep: ", i)
-#     end
-#     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-#     coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
-# end
-
-plot_env_profiles(grid)
->>>>>>> 1259ef2 (fix coalescence, debug condensation)
+#     #surface forcings
+# @btime update_surface_forcings!(grid, constants, scmsettings)

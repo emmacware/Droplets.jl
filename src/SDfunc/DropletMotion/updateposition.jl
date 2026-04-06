@@ -13,7 +13,11 @@ export update_position!, update_droplet_positions!
 
 function update_droplet_positions!(droplets::droplet_attributes_1d, w_function, Δt::FT,spatialsettings::spatial_settings_1d) where FT<:AbstractFloat
     # map(i -> update_each_droplet!(i, droplets, w_function, Δt, spatialsettings), 1:length(droplets.X))
+<<<<<<< HEAD
     droplets.z_loc .+=  w_function.(droplets.z_loc).* Δt - v_term.(volume_to_radius.(droplets.X)) .* Δt
+=======
+    droplets.z_loc .+=  w_function.(droplets.z_loc) - v_term.(volume_to_radius.(droplets.X)) .* Δt
+>>>>>>> 1259ef2 (fix coalescence, debug condensation)
     droplets.cell_id .= Int.(floor.(droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1)
     return nothing
 end
