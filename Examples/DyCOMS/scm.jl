@@ -5,11 +5,7 @@ using OrdinaryDiffEq
 
 using Plots
 using ComponentArrays
-<<<<<<< HEAD
 # using OrdinaryDiffEqBDF
-=======
-using LSODA
->>>>>>> 1259ef2 (fix coalescence, debug condensation)
 include("initial_state_functions.jl")
 include("forward_solve.jl")
 include("radiation_call.jl")
@@ -91,7 +87,6 @@ Xinit= droplets.X .+ 0
 for k in range(1,nz)
     drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
 
-<<<<<<< HEAD
     T = grid.states.T[k]
     qv_k = grid.states.qv[k]
     P_k = grid.states.P[k]
@@ -119,21 +114,3 @@ plot_env_profiles(grid)
 # savefig("scm_profiles_10min.png")
 
 # scatter(Xinit, droplets.X, label="Final Volume")
-=======
-#set to critical radius to begin, need to change to eq radius
-for k in 1:nz
-    drop_idx = coagdata.I[droplets.grid_range[k]]
-    set_X_crit!.(droplets,drop_idx,kappa_ammonium_sulfate,grid.states.T[k])
-end
-
-
-# for i in 1:2
-#     if i % 1 == 0
-#         println("Timestep: ", i)
-#     end
-#     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-#     coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings)
-# end
-
-plot_env_profiles(grid)
->>>>>>> 1259ef2 (fix coalescence, debug condensation)
