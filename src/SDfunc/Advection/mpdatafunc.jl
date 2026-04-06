@@ -1,5 +1,5 @@
 export mpdata_step!, flux_horizontal!, flux_vertical!, donor_cell_pass!, compute_antidiffusive_velocity!
-export antiosc!, flux_faces, beta_function, find_extrema!, mpdata_scm!
+export antiosc!, flux_faces, beta_function, beta_function_1d, find_extrema!, mpdata_scm!
 
 limit(bc::Periodic,i,N) = i > N ? i - N : i < 1 ? i + N : i
 limit(bc::NoFlux,i,N) = i > N ? N + 1 - (i - N) : i < 1 ? i + (1 + abs(i)) : i
@@ -288,6 +288,62 @@ function find_extrema!(ϕ,tmp;hbc::BoundaryCondition=Periodic(), vbc::BoundaryCo
     end
 end
 
+function find_extrema!(ϕ::Vector, tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic())
+    nz = length(ϕ)
+    for k in 1:nz
+        km1, kp1 = limit(vbc, k-1, nz), limit(vbc, k+1, nz)
+        tmp.minmax.localmax[k] = maximum((ϕ[km1], ϕ[k], ϕ[kp1]))
+        tmp.minmax.localmin[k] = minimum((ϕ[km1], ϕ[k], ϕ[kp1]))
+    end
+end
+
+function beta_function_1d(ϕ, tmp::mpdata_tmp_1d, k, km1, kp1, GCzmh, GCzph, infinite_gauge; ϕ_eps=1e-20)
+    ψ = ϕ[k]; ψL = ϕ[km1]; ψR = ϕ[kp1]
+    max_phi = tmp.minmax.localmax[k]
+    min_phi = tmp.minmax.localmin[k]
+
+    β_in = (max_phi - ψ) / (
+         max(flux(ψL, ψ, GCzmh, infinite_gauge=infinite_gauge), 0) +
+        -min(flux(ψ, ψR, GCzph, infinite_gauge=infinite_gauge), 0) + ϕ_eps)
+
+    β_out = (ψ - min_phi) / (
+        -min(flux(ψL, ψ, GCzmh, infinite_gauge=infinite_gauge), 0) +
+         max(flux(ψ, ψR, GCzph, infinite_gauge=infinite_gauge), 0) + ϕ_eps)
+
+    β_in  = max(0.0, min(1.0, β_in))
+    β_out = max(0.0, min(1.0, β_out))
+    return β_in, β_out
+end
+
+function antiosc!(ϕ::Vector, tmp::mpdata_tmp_1d, settings; vbc::BoundaryCondition=Periodic())
+    nz = length(ϕ)
+    tmp.GCz_tmp .= 0
+
+    for k in 1:nz-1
+        km1 = limit(vbc, k-1, nz)
+        kp1 = k + 1
+        kp2 = limit(vbc, k+2, nz)
+
+        beta_k_in,   beta_k_out   = beta_function_1d(ϕ, tmp, k,   km1, kp1,
+            tmp.GCz_step[k],   tmp.GCz_step[k+1], settings.infinite_gauge)
+        beta_kp1_in, beta_kp1_out = beta_function_1d(ϕ, tmp, kp1, k,   kp2,
+            tmp.GCz_step[k+1], tmp.GCz_step[k+2], settings.infinite_gauge)
+
+        if tmp.GCz_step[k+1] >= 0
+            scale = min(1.0, beta_k_out, beta_kp1_in)
+        else
+            scale = min(1.0, beta_k_in,  beta_kp1_out)
+        end
+        tmp.GCz_tmp[k+1] = tmp.GCz_step[k+1] * scale
+    end
+
+    if vbc isa Periodic
+        tmp.GCz_tmp[1] = tmp.GCz_tmp[end]
+    end
+
+    tmp.GCz_step .= tmp.GCz_tmp
+end
+
 function mpdata_step!(ϕ_stage::Matrix{Float64}, GCx::Matrix{Float64}, GCy::Matrix{Float64}, tmp::mpdata_tmp,settings::mpdata_settings;f=0.5) #current 201.875 μs (0 allocations: 0 bytes)
     n_corr = settings.n_corr
     hbc::BoundaryCondition = settings.horizontal_boundary_condition
@@ -346,7 +402,7 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
     vbc::BoundaryCondition = settings.vertical_boundary_condition
 
     tmp.GCz_step .= GCz.+0
-    # find_extrema!(ϕ_stage,tmp)
+    find_extrema!(ϕ_stage,tmp,vbc=vbc)
 
     donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false)
 
@@ -355,7 +411,7 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
         compute_antidiffusive_velocity!(ϕ_stage,tmp,settings,f=f, vbc=vbc)
         if settings.nonoscillatory
             antiosc!(ϕ_stage,tmp,settings,vbc=vbc)
-            # find_extrema!(ϕ_stage,tmp)
+            find_extrema!(ϕ_stage,tmp,vbc=vbc)
         end
 
         donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge)
@@ -369,6 +425,7 @@ function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, set
 
     mpdata_step!(grid.states.qv, GCz,tmp,settings)
     mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    # mpdata_step!(grid.states.e, GCz,tmp,settings)
     
     grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
     grid.states.ρ .= ρ_ideal_gas(grid.states.P,grid.states.T,grid.states.qv,constants)

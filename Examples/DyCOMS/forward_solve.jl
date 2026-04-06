@@ -4,7 +4,7 @@
 
 function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets::droplet_attributes{FT},
         coagsettings::coag_settings{FT}, spatialsettings::spatial_settings{FT},
-        condensationsettings::condensation_settings{FT},condensation_integrator, coagdata::coagulation_run_spatial, 
+        condensationsettings::condensation_settings{FT},condensation_integrator, coagdata::coagulation_run_spatial,
         diagnosticsettings::diagnostic_settings{FT},
         prescribed_w::Function, mpdata_tmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
         constants,
@@ -29,6 +29,11 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     #Droplet motion (advection and settling)
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings)
 
+    # Environmental advection 
+    mpdata_scm!(grid, dt, mpdata_tmp, mpdatasettings,constants)
+    tke_timestep!(grid, tkesettings, constants, dt)
+    turbulent_droplet_diffusion!(droplets, grid, tkesettings, dt,coagdata)
+    
     #change sorting indexes if droplets moved
     coagdata.I .= sort(coagdata.I, by = i -> droplets.cell_id[i])
     for g in eachindex(droplets.grid_range)
@@ -40,11 +45,6 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         droplets.grid_range[g] = start:findlast(i -> droplets.cell_id[i] == g, coagdata.I)
     end
     
-    # Environmental advection 
-    mpdata_scm!(grid, dt, mpdata_tmp, mpdatasettings,constants)
-    tke_timestep!(grid, tkesettings, constants, dt)
-    turbulent_droplet_diffusion!(droplets, grid, tkesettings, dt)
-
     #surface forcings
     update_surface_forcings!(grid, constants, scmsettings)
 
@@ -99,5 +99,8 @@ function update_surface_forcings!(grid, constants, scmsettings)
     grid.states.θ[1] = theta_from_T(grid.states.T[1], grid.states.P[1], constants)
     grid.states.ρ[1] = ρ_ideal_gas(grid.states.P[1], grid.states.T[1], grid.states.qv[1], constants)
     grid.states.qv[1] += scmsettings.surface_latent_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.L * grid.dz)
+    #update ρ and theta after surface fluxes
+    grid.states.θ[1] = theta_from_T(grid.states.T[1], grid.states.P[1], constants)
+    grid.states.ρ[1] = ρ_ideal_gas(grid.states.P[1], grid.states.T[1], grid.states.qv[1], constants)
     return
 end

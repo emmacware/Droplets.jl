@@ -64,13 +64,11 @@ struct mpdata_tmp_1d
     ϕ::Vector{Float64}
     GCz_step::Vector{Float64}
     GCz_tmp::Vector{Float64}
-    # minmax::@NamedTuple{localmin::Vector{Float64}, localmax::Vector{Float64}}
+    minmax::@NamedTuple{localmin::Vector{Float64}, localmax::Vector{Float64}}
 
     function mpdata_tmp_1d(ϕ, GCz_step)
-        # minmax = (localmin=zeros(size(ϕ)), localmax=zeros(size(ϕ)))
-        new(zeros(length(ϕ)), zeros(length(GCz_step)), zeros(length(GCz_step)), 
-            # minmax
-            )
+        minmax = (localmin=zeros(length(ϕ)), localmax=zeros(length(ϕ)))
+        new(zeros(length(ϕ)), zeros(length(GCz_step)), zeros(length(GCz_step)), minmax)
     end
 end
 

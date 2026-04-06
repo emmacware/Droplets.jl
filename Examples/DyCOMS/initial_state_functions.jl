@@ -24,7 +24,7 @@ function dP_dz(P_z, ode_settings, z)
 end
 
 
-function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, prescribed_v, prescribed_w)
+function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w)
     grid = create_scm_grids(nz, dz)
     p = (constants, θl, qt)
 
@@ -38,8 +38,8 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, pr
     # grid.states.ρ .= grid.states.P ./ (constants.Rd .* T_virtual.(grid.states.T, grid.states.qv))
     grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
 
-    grid.wind.u .= prescribed_u.(grid.centers_z)
-    grid.wind.v .= prescribed_v.(grid.centers_z)
+    grid.wind.u .= geostrophic_u.(grid.centers_z)
+    grid.wind.v .= geostrophic_v.(grid.centers_z)
     grid.wind.w .= prescribed_w.(grid.faces_z)
     return grid
 end
@@ -83,8 +83,10 @@ end
 function plot_env_profiles(grid)
     p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
     p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="q_v", legend=false)
-    p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC+grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
-    # p6 = plot!((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", legend=false)
+    p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC+grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC")
+    p6 = plot!((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", label="Aerosol")
+    p6 = plot!((grid.diagnostics.cloud_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", label="Cloud")
+    p6 = plot!((grid.diagnostics.rain_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", label="Rain")
 
     p3 = plot(grid.states.P,grid.centers_z, ylabel="Height (m)", xlabel="Pressure (Pa)", title="P", legend=false)
     p4 = plot(grid.states.ρ,grid.centers_z, ylabel="Height (m)", xlabel="density (kg/m3)", title="ρ", label = "ρ")

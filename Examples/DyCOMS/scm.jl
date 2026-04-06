@@ -19,7 +19,7 @@ Z_max = 1500.0 #m
 dz = 10.0 #m
 nz = Int(Z_max/dz)
 dt = 1.0 #s
-Ns_per_grid = 16
+Ns_per_grid =16
 seed = 30
 
 
@@ -32,15 +32,15 @@ inv_height = 795.0  # m
 ρ_inv = 1.12 # kg/m^3, air density @ inversion height
 D = 3.75e-6 # s^-1, constant Divergence
 u_star = 0.25 # m/s, friction velocity
-prescribed_u(z) = 3 + 4*(z/1000) # m/s
-prescribed_v(z) = -9 + 5.6*z/1000        # m/s
+geostrophic_u(z) = 3 + 4*(z/1000) # m/s
+geostrophic_v(z) = -9 + 5.6*z/1000        # m/s
 prescribed_w(z) = min(-D*z,0) # m/s
 θl(z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
 qt(z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
 surface_latent_heat_flux = 93 # W/m^2
 surface_sensible_heat_flux = 16 # W/m^2
-surface_zonal_momentum_flux = prescribed_u(0)*u_star^2 / sqrt(prescribed_u(0)^2 + prescribed_v(0)^2)
-surface_meridional_momentum_flux = prescribed_v(0)*u_star^2 / sqrt(prescribed_u(0)^2 + prescribed_v(0)^2)
+# surface_zonal_momentum_flux = geostrophic_u(0)*u_star^2 / sqrt(geostrophic_u(0)^2 + geostrophic_v(0)^2)
+# surface_meridional_momentum_flux = geostrophic_v(0)*u_star^2 / sqrt(geostrophic_u(0)^2 + geostrophic_v(0)^2)
 
 #Bimodal Aerosol Distribution, Ackerman et al., 2009
 #ammonium sulfate, Dziekan et al 2019 (from Petters and Kreidenweis (2007))
@@ -58,9 +58,9 @@ initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) +
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max)
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt)
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
-mpdatasettings = mpdata_settings_1d(nz, vertical_boundary_condition=NoFlux())
+mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux())
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
-tkesettings = tke_settings{FT}(u_star=u_star)
+tkesettings = tke_settings{FT}(u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v)
 diagnosticsettings = diagnostic_settings()
 
 
@@ -69,7 +69,10 @@ lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_t
 
 
 # Create environmnent
-grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_u, prescribed_v, prescribed_w)
+grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w)
+grid.states.e .= FT(u_star^2 / sqrt(tkesettings.c_m)) .* [max(1 - z/inv_height, 0.0)^(3/2) for z in grid.centers_z]
+# fill(max.(e_init, FT(1e-4)))
+grid.states.e .= max.(grid.states.e, FT(1e-4)) # apply TKE floor
 #to plot initial profiles: plot_env_profiles(grid)
 
 # Create superdroplets
@@ -100,7 +103,7 @@ end
 sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 plot_env_profiles(grid)
 
-for i in 1:60
+for i in 1:1200
     if i % 1 == 0
         println("Timestep: ", i)
     end
@@ -113,3 +116,4 @@ plot_env_profiles(grid)
 # savefig("scm_profiles_10min.png")
 
 # scatter(Xinit, droplets.X, label="Final Volume")
+

@@ -45,6 +45,7 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     P_SLP = FT(101325.0)     # standard sea level pressure Pa
     # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
     ϵ = FT(1.6080793637401138)           # molar mass ratio air and vapor
+    Ω = FT(7.2921150e-5)     # Earth's rotation rate in radians per second
 end
 
 const constants = Constants{Float64}()
