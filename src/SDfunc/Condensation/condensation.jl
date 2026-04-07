@@ -392,7 +392,7 @@ function set_X_crit!(droplets,i,kappa,T)
 end
 
 function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=100, tol=1e-12)
-    println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
+    #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
     dry_r3 = droplets.dry_r3[drop_idx]
     dry_r = (dry_r3)^(1/3)
     R_guess = max(dry_r * 2, 1e-8)
@@ -407,7 +407,7 @@ function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=10
         
         if abs(f) < tol
             droplets.X[drop_idx] = radius_to_volume(R_guess)
-            println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
+            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
             return
         end
 
@@ -419,7 +419,7 @@ function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=10
         
         if abs(R_new - R_guess) < tol
             droplets.X[drop_idx] = radius_to_volume(R_new)
-            println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
+            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
             return
         end
         

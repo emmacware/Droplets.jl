@@ -51,7 +51,7 @@ function read_radiation_tables()
     return lookup_lw,lookup_lw_cld,lookup_sw,lookup_sw_cld,idx_gases
 end
 
-function radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
+function radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt, i)
     
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
@@ -161,8 +161,8 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     cld_path_ice = zeros(FT, nlay, 1)
    
     #Liquid water diagnostics (cloud_, aerosol_, and rain_)
-    cld_path_liq .= grid.diagnostics.cloud_LWC
-    cld_r_eff_liq .= grid.diagnostics.cloud_effective_radius
+    cld_path_liq .= grid.diagnostics.cloud_LWC * grid.dz * 1000 #units in g/m2
+    cld_r_eff_liq .= grid.diagnostics.cloud_effective_radius * 1.0e6 #units in microns
     cld_frac[cld_path_liq.>0.0] .= 1.0
     cld_mask_lw[cld_frac.==1] .= true
     cld_mask_sw[cld_frac.==1] .= true
@@ -196,7 +196,8 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     grid_params = RRTMGPGridParams(FT; context, nlay, ncol)
 
-    inc_flux = nothing
+    #inc_flux = nothing
+    inc_flux = [21.0, 31.0, 5.0, 15.0, 2.0, 0.03, 0.01, 0.04, 1.8, 3.1, 9.3, 0.6, 0.01, 0.4, 0.001, 0.002]
     slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
     # Setting up shortwave problem---------------------------------------
     inc_flux_diffuse = nothing
@@ -221,7 +222,11 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
    
-    grid.states.T .+= hr_lay[:,1] * dt 
+    if i==30
+        println("here")
+    end
+
+    grid.states.T .+= -hr_lay[:,1] * dt 
     grid.states.θ .= theta_from_T(grid.states.T, grid.states.P, constants)
     grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
     
