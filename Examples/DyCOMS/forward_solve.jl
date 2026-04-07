@@ -10,6 +10,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         constants,
         scmsettings::scm_settings{FT},
         tkesettings::tke_settings{FT},
+        i::Int
 
     ) where {FT<:AbstractFloat}
     
@@ -18,12 +19,12 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 
     println("radiation")
-    flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt)
+    flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt, i)
 
     #Update microphysics (condensation, coagulation)
     for t_cond in 1:100
         # println("Condensation substep: ", t_cond)
-        condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings,coagdata)
+        condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings,coagdata,flux_net_droplet)
     end
     coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
     #Droplet motion (advection and settling)
@@ -54,7 +55,7 @@ end
 
 
 
-function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings,coagdata)
+function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings,coagdata,flux_net_droplets)
     # Calculate condensation time step for each droplet
     Ns = length(droplets.X)
     FT = eltype(droplets.X)
@@ -72,6 +73,7 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
         T_k = state.T[z]
         qv_k = state.qv[z]
         P_k = state.P[z]
+        #fnd_k = flux_net_droplets[k,:]
 
         S_env = sat(qv_k, P_k) / esat(T_k)
         dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg) #giving up on DifferentialEquations for now, probably will put in more accurate integrator

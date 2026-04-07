@@ -24,11 +24,7 @@ struct droplet_attributes_1d{FT<:AbstractFloat} <:droplet_attributes{FT}
     # κ::Vector{FT}
     z_loc::Vector{FT}
     cell_id::Vector{Int}
-<<<<<<< HEAD
     grid_range::Vector{Union{UnitRange{Int}, Nothing}}
-=======
-    grid_range::Vector{UnitRange{Int}}
->>>>>>> 1259ef2 (fix coalescence, debug condensation)
 end
 
 struct droplet_attributes_2d{FT<:AbstractFloat} <:droplet_attributes{FT}

@@ -101,16 +101,16 @@ end
 sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 plot_env_profiles(grid)
 
-for i in 1:60
+for i in 1:1200
     if i % 1 == 0
         println("Timestep: ", i)
     end
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings)
+    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings,i)
 end
 
 plot_env_profiles(grid)
 
 # savefig("scm_profiles_10min.png")
 
-# scatter(Xinit, droplets.X, label="Final Volume")
+#scatter(Xinit, droplets.X, label="Final Volume")
