@@ -196,8 +196,10 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     grid_params = RRTMGPGridParams(FT; context, nlay, ncol)
 
-    #inc_flux = nothing
-    inc_flux = [21.0, 31.0, 5.0, 15.0, 2.0, 0.03, 0.01, 0.04, 1.8, 3.1, 9.3, 0.6, 0.01, 0.4, 0.001, 0.002]
+    inc_flux = nothing
+    #inc_flux has dimensions of ncol x ngpt (so 1 x 256)
+    #below is approx incoming lw flux by band
+    #inc_flux = [21.0, 31.0, 5.0, 15.0, 2.0, 0.03, 0.01, 0.04, 1.8, 3.1, 9.3, 0.6, 0.01, 0.4, 0.001, 0.002]
     slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
     # Setting up shortwave problem---------------------------------------
     inc_flux_diffuse = nothing
@@ -221,10 +223,6 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     hr_lay = DA{FT}(undef, nlay, ncol)
 
     compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
-   
-    if i==30
-        println("here")
-    end
 
     grid.states.T .+= -hr_lay[:,1] * dt 
     grid.states.θ .= theta_from_T(grid.states.T, grid.states.P, constants)
