@@ -18,13 +18,12 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 
-    println("radiation")
     flux_net_droplet = radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt, i)
 
     #Update microphysics (condensation, coagulation)
     for t_cond in 1:100
         # println("Condensation substep: ", t_cond)
-        condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings,coagdata,flux_net_droplet)
+        condensation_time_step_spatial!(droplets, grid.states, nz, dt/100, condensation_integrator, constants,condensationsettings,spatialsettings,coagdata,flux_net_droplet)
     end
     coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
     #Droplet motion (advection and settling)
@@ -55,12 +54,12 @@ end
 
 
 
-function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,constants,condsettings,spatialsettings,coagdata,flux_net_droplets)
+function condensation_time_step_spatial!(droplets, state, nz, Δtg,condensation,constants,condsettings,spatialsettings,coagdata,flux_net_droplets)
     # Calculate condensation time step for each droplet
     Ns = length(droplets.X)
     FT = eltype(droplets.X)
 
-    
+    R_array = range(lookup_lw_cld.bounds[1],lookup_lw_cld.bounds[2],lookup_lw_cld.dims[3])
     mass_change = zeros(FT, nz)
 
     for z in 1:nz
@@ -69,14 +68,35 @@ function condensation_time_step_spatial!(droplets, state,nz, Δtg,condensation,c
         end
         k = coagdata.I[droplets.grid_range[z]]
 
+        X = droplets.X[k]
         R = volume_to_radius.(droplets.X[k])
         T_k = state.T[z]
         qv_k = state.qv[z]
         P_k = state.P[z]
-        #fnd_k = flux_net_droplets[k,:]
+
+        rad_term = zeros(size(X))
+        for idrop in 1:length(R)
+            if R[idrop] >= 2.5e-6 && X[idrop] >= diagnosticsettings.aerosol_cloud_cuttoff && X[idrop] < diagnosticsettings.cloud_rain_cuttoff
+                for ibnd in 1:16
+                    fnd_k = flux_net_droplets[z,ibnd]
+                    extliq,ssaliq,asyliq = LookUpTables.getview_liqdata(lookup_lw_cld,ibnd)
+                    absliq = extliq.*(1.0.-ssaliq)                   
+
+                    abs_drop = RRTMGP.Optics.interp1d_equispaced(R[idrop]*1.0e6,R_array,absliq)
+                    Qa = abs_drop * X[idrop] * constants.ρl * 1000.0 / (pi *R[idrop]^2)
+
+                    #if R[idrop]>10.0e-6 
+                    #    println(R[idrop]*1.0e6,' ',Qa)
+                    #end
+                    rad_term[idrop] += Qa * flux_net_droplets[z,ibnd]
+                end
+            else
+                rad_term[idrop] = 0.0
+            end
+        end
 
         S_env = sat(qv_k, P_k) / esat(T_k)
-        dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
+        dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, rad_term, Δtg) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
         dX = (4 * pi .* R.^2 .* dR) .* Δtg
         dry_vol = radius_to_volume.((droplets.dry_r3[k]).^(1/3))
         dX .= max.(dX, dry_vol .- droplets.X[k]) # snap to dry mass if smaller

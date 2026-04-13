@@ -1,4 +1,5 @@
-
+using Revise
+using JLD2
 using Droplets
 # using DifferentialEquations
 using OrdinaryDiffEq
@@ -104,16 +105,24 @@ end
 sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 plot_env_profiles(grid)
 
+nt = 1200
+CWC = zeros(nz,nt)
+RWC = zeros(nz,nt)
+AWC = zeros(nz,nt)
 for i in 1:1200
     if i % 1 == 0
         println("Timestep: ", i)
     end
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
     coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings,i)
+    CWC[:,i]=grid.diagnostics.cloud_LWC
+    RWC[:,i]=grid.diagnostics.rain_LWC
+    AWC[:,i]=grid.diagnostics.aerosol_LWC
 end
 
 plot_env_profiles(grid)
 
+@save "test_run3.jld2" CWC RWC AWC
 # savefig("scm_profiles_10min.png")
 
 # scatter(Xinit, droplets.X, label="Final Volume")

@@ -110,13 +110,21 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv, timestep)
+function drkappakohler(R,dry_r3,kappa,T,Senv, rad_term,timestep)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
-    denom = (FK(T) + FD(T))
+    fk = FK(T)
+    denom = (fk + FD(T))
     # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
     
+    #if rad_term * fk / (constants.L*constants.ρl * denom) > 1e-6
+    #    println(dr,' ',rad_term * fk / (constants.L*constants.ρl * denom))
+    #end
+
+    dr += rad_term * fk / (constants.L*constants.ρl * denom) 
+        
+
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
@@ -544,7 +552,9 @@ function condensation_rhs_single_droplet(du, u, p, t)
     P = grid.P[cell]
     
     S_env = sat(qv, P) / esat(T)
-    dR = drkappakohler(R, drops.dry_r3[k], condsettings.kappa, T, S_env, t)
+
+    #Fix this if we go back to using the integrator
+    dR = 0#drkappakohler(R, drops.dry_r3[k], condsettings.kappa, T, S_env, t)
     
     du[1] = dR / R  # d(ln(R))/dt = dR/R, no type conversion
     return nothing
