@@ -24,19 +24,23 @@ function dP_dz(P_z, ode_settings, z)
 end
 
 
-function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w)
-    grid = create_scm_grids(nz, dz)
+function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings)
+    grid = create_scm_grids(nz, dz,droplets,spatial = spatialsettings,output=nothing)
+
     p = (constants, θl, qt)
 
     press = ODEProblem(dP_dz,P_surface,(0,maximum(grid.centers_z)+1),p)
-    P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = grid.centers_z)
-    grid.states.P .= P_init.u
+    z_save = sort(unique([grid.centers_z; grid.faces_z]))
+    P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save)
+    grid.states.P .= P_init.(grid.centers_z)
+    grid.states.P_faces .= P_init.(grid.faces_z)
 
     grid.states.θ .= θl.(grid.centers_z)
     grid.states.qv .= qt.(grid.centers_z)
-    grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
+    # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
     # grid.states.ρ .= grid.states.P ./ (constants.Rd .* T_virtual.(grid.states.T, grid.states.qv))
-    grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
+    # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
+    grid.states.ρ .= ρ_calc_θ(grid.states.P,grid.states.θ,grid.states.qv,constants)
 
     grid.wind.u .= geostrophic_u.(grid.centers_z)
     grid.wind.v .= geostrophic_v.(grid.centers_z)
@@ -76,7 +80,7 @@ function init_droplets_dycoms_scm(dist,settings::coag_settings{FT},
     grid_range = [findfirst(i -> cell_id[i] == g, dropidx) : findlast(i -> cell_id[i] == g, dropidx) for g in 1:spatial.Nz]
 
 
-    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id,grid_range)
+    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id,grid_range, dropidx)
     return droplets
 end
 
@@ -91,23 +95,36 @@ function plot_env_profiles(grid)
     p3 = plot(grid.states.P,grid.centers_z, ylabel="Height (m)", xlabel="Pressure (Pa)", title="P", legend=false)
     p4 = plot(grid.states.ρ,grid.centers_z, ylabel="Height (m)", xlabel="density (kg/m3)", title="ρ", label = "ρ")
     # p4 = vline!([ρ_inv], line=:dash, color=:red, label="ρ_inv")
-    p5 = plot(grid.states.T,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
-    p5 = plot!(T_virtual.(grid.states.T, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
+    grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
+    p5 = plot(grid.states.T_tmp,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
+    p5 = plot!(T_virtual.(grid.states.T_tmp, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
     plot(p1, p2, p3,p4,p5,p6, layout=(3,2), size=(800,900))
 end
 
-
-function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
-    nz = grid.nz
-    lnr = log.(volume_to_radius.(drops.X))
-    Y = [(lnr[1])]
-    p = (1,drops, grid.states, constants, condensationsettings,spatialsettings)
-    condensation_prob = ODEProblem(condensation_rhs_single_droplet, Y, (0.0, 0.01), p)
-    # condensation_prob = ODEProblem(condensation_rhs_single_cell, Y, (0.0, 1.0), p)
-
-    condensation_integrator = init(condensation_prob, Rosenbrock23(), reltol = 1e-12, abstol = 1e-12)
-    return condensation_integrator
+function plot_output_timeseries(grid)
+    time = grid.output.time
+    z_centers = grid.centers_z
+    p1 = plot(grid.output.θ[:,1:24:end], z_centers, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
+    p2 = plot(grid.output.qv[:,1    :24:end]*1000, z_centers, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="qv", legend=false)
+    p3 = plot(grid.output.cloud_heating_rate[:,1:24:end]*3600, z_centers, ylabel="Height (m)", xlabel="Cloud Heating Rate (K/hr)", title="Cloud Heating Rate", legend=false)
+    LWP = grid.output.LWP
+    p4 = plot(time, LWP, xlabel="Time (s)", ylabel="LWP (g/m2)", title="LWP Timeseries", legend=false)
+    p5 = plot(time, grid.output.surface_precipitation, xlabel="Time (s)", ylabel="Surface Precipitation (kg/m2/s)", title="Surface Precipitation Timeseries", legend=false)
+    p6 = plot(grid.output.cloud_LWC[:,1:24:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/kg)", title="Cloud LWC", legend=false)
+    p6 = plot!(grid.output.rain_LWC[:,1:24:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
+    plot(p1, p2, p3, p4,p5, layout=(3,2), size=(800,600))
 end
+# function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
+#     nz = grid.nz
+#     lnr = log.(volume_to_radius.(drops.X))
+#     Y = [(lnr[1])]
+#     p = (1,drops, grid.states, constants, condensationsettings,spatialsettings)
+#     condensation_prob = ODEProblem(condensation_rhs_single_droplet, Y, (0.0, 0.01), p)
+#     # condensation_prob = ODEProblem(condensation_rhs_single_cell, Y, (0.0, 1.0), p)
+
+#     condensation_integrator = init(condensation_prob, Rosenbrock23(), reltol = 1e-12, abstol = 1e-12)
+#     return condensation_integrator
+# end
 
 
 # p = (1,droplets, grid.states, constants, condensationsettings,spatialsettings)

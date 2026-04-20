@@ -23,6 +23,9 @@ Base.@kwdef struct spatial_settings_1d{FT<:AbstractFloat} <:spatial_settings{FT}
     area_per_grid::FT = 1.0 #m^2, only used for 1d case to calculate the volume of each grid cell
     periodic_boundaries_x::Bool = true 
     settling::Bool = true 
+    dt::FT = FT(1.0)
+    t_max::Int = 3600
+    dt_output::FT = FT(10.0)
 end
 
 # Diagnostics Struct

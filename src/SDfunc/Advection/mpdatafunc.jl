@@ -25,7 +25,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false,topcellreservoir=true)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false,topcellreservoir=false)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -121,9 +121,10 @@ function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryC
     GCz_inside = tmp.GCz_step .+ 0
     nz = length(ϕ)
 
-    for k in 1:nz-1
+    for k_ in 0:nz-1
 
-        kp = limit(vbc,k + 1, nz)
+        kp = limit(vbc,k_ + 1, nz)
+        k = limit(vbc,k_, nz)
 
         B_num =(ϕ[kp] - ϕ[k])
         B_den = settings.infinite_gauge ? 2 : (ϕ[kp] + ϕ[k] + ϕ_eps)
@@ -199,7 +200,7 @@ function antiosc!(ϕ,tmp,settings; hbc::BoundaryCondition=Periodic(), vbc::Bound
     # flux_h, flux_v = flux_faces(ϕ, antidiffusive_GCx, antidiffusive_GCy; 
     #                            hbc=hbc, vbc=vbc, infinite_gauge=settings.infinite_gauge)
 
-    for i in 1:nx, j in 1:ny
+    for i in 1:nx, j in 1:ny 
             jp1,jm1,jp2 = limit(vbc,j + 1, ny), limit(vbc,j - 1, ny), limit(vbc,j + 2, ny)
             ip1, im1,ip2 = limit(hbc,i + 1, nx), limit(hbc,i - 1, nx), limit(hbc,i + 2, nx)
             #faces
@@ -404,7 +405,8 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
     tmp.GCz_step .= GCz.+0
     find_extrema!(ϕ_stage,tmp,vbc=vbc)
 
-    donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false)
+    tcr = vbc isa NoFlux
+    donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false, topcellreservoir=tcr)
 
 
     for _ in 2:n_corr
@@ -414,7 +416,7 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
             find_extrema!(ϕ_stage,tmp,vbc=vbc)
         end
 
-        donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge)
+        donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr)
 
     end
 end
@@ -427,7 +429,7 @@ function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, set
     mpdata_step!(grid.states.θ, GCz,tmp,settings)
     # mpdata_step!(grid.states.e, GCz,tmp,settings)
     
-    grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
-    grid.states.ρ .= ρ_ideal_gas(grid.states.P,grid.states.T,grid.states.qv,constants)
+    # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
+    grid.states.ρ .= ρ_calc_θ(grid.states.P,grid.states.θ,grid.states.qv,constants)
     return
 end

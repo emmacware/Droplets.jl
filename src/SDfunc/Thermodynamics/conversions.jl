@@ -1,6 +1,6 @@
 
-export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T, calc_p, theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas
-
+export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T, calc_p, theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas, ρ_calc_θ
+export compute_ql_at_cell
 
 
 function calc_θ_dry(constants,θl, q_vap)
@@ -43,3 +43,14 @@ T_virtual(T,q_vap) = T .* (1 .+ 0.61 .* q_vap)
 T_from_theta(θ,P,constants) = θ .* (P ./ constants.P0).^(constants.Rd / constants.Cp_air)
 θl(P,T,ql,constants) = (constants.P0 ./ P).^(constants.Rd / constants.Cp_air) .* (T .- constants.L .*ql ./constants.Cp_air) #should the last cp be for liquid?
 ρ_ideal_gas(P,T,q_vap,constants) = P ./ (constants.Rd .* T_virtual(T,q_vap))
+ρ_calc_θ(P,θ,q_vap,constants) = ρ_ideal_gas(P,T_from_theta(θ,P,constants),q_vap,constants)
+
+function compute_ql_at_cell(state, i) 
+    if state.droplets.grid_range[i] == nothing
+        return zero(eltype(state.ρ))
+    end
+    drop_idx = state.droplets.I[state.droplets.grid_range[i]]
+    
+    ql = sum(state.droplets.X[drop_idx] .* state.droplets.ξ[drop_idx]) * constants.ρl / (state.ρ[i] * state.spatial.area_per_grid * state.spatial.z_grid_height)
+    return ql
+end

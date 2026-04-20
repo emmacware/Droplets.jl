@@ -61,6 +61,7 @@ struct coagulation_run_spatial{FT<:AbstractFloat} <:coagulation_run{FT}
     lowest_zero::Ref{Bool}
     deficit::Vector{Float64}
     first_in_pair::Vector{Bool}
+    collision_rate::Vector{FT}
     # grid_range::Vector{UnitRange{Int}}
 
     function coagulation_run_spatial{FT}(GridCount::Int, System_Ns,droplets) where FT<:AbstractFloat
@@ -70,15 +71,13 @@ struct coagulation_run_spatial{FT<:AbstractFloat} <:coagulation_run{FT}
         # pαdt = zeros(FT, div(System_Ns, 2))
         ϕ = zeros(FT, div(System_Ns, 2))
         lowest_zero = Ref(false)
-        deficit = zeros(FT, div(System_Ns, 2))
+        # deficit = zeros(FT, div(System_Ns, 2))
+        deficit = zeros(FT, div(GridCount, 2))
         first_in_pair = falses(System_Ns)
-        
-        # grid_range = Vector{UnitRange{Int}}(undef, GridCount)
-        # sort!(coagdata.I, by = i -> droplets.cell_id[i])
-        # coagdata.grid_range .= [findfirst(i -> droplets.cell_id[i] == g, coagdata.I) : findlast(i -> droplets.cell_id[i] == g, coagdata.I) for g in 1:GridCount]
+        collision_rate = zeros(FT, GridCount)
 
-        new{FT}(GridCount,I,lowest_zero, deficit, first_in_pair)#, grid_range)
-        # new{FT}(N_in_cell, I,scale, pαdt, ϕ, lowest_zero, deficit)
+        
+        new{FT}(GridCount,droplets.I,lowest_zero, deficit, first_in_pair, collision_rate)
     end
 end
 

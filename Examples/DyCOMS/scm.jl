@@ -23,6 +23,8 @@ nz = Int(Z_max/dz)
 dt = 1.0 #s
 Ns_per_grid =16
 seed = 30
+t_max = 3600.0*6 #s
+t_output = 60.0*5 #s
 
 
 
@@ -37,8 +39,8 @@ u_star = 0.25 # m/s, friction velocity
 geostrophic_u(z) = 3 + 4*(z/1000) # m/s
 geostrophic_v(z) = -9 + 5.6*z/1000        # m/s
 prescribed_w(z) = min(-D*z,0) # m/s
-θl(z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
-qt(z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
+θl_initial(z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
+qt_initial(z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
 surface_latent_heat_flux = 93 # W/m^2
 surface_sensible_heat_flux = 16 # W/m^2
 # surface_zonal_momentum_flux = geostrophic_u(0)*u_star^2 / sqrt(geostrophic_u(0)^2 + geostrophic_v(0)^2)
@@ -57,7 +59,7 @@ initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) +
 
 
 #Settings Structs
-spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max)
+spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output)
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt)
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
 mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux())
@@ -69,21 +71,18 @@ diagnosticsettings = diagnostic_settings()
 #Read Radiation Files 
 lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
 
-
-# Create environmnent
-grid = initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w)
-grid.states.e .= FT(u_star^2 / sqrt(tkesettings.c_m)) .* [max(1 - z/inv_height, 0.0)^(3/2) for z in grid.centers_z]
-# fill(max.(e_init, FT(1e-4)))
-grid.states.e .= max.(grid.states.e, FT(1e-4)) # apply TKE floor
-#to plot initial profiles: plot_env_profiles(grid)
-
 # Create superdroplets
 droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialsettings)
+
+# Create environmnent
+grid = initialize_scm_environment(nz, dz, P_surface, θl_initial, qt_initial, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings)
 
 
 # Create other needed data structures
 coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)
-condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
+# condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
+conddata = condensation_data(FT,nz)
+raddata = radiation_data(FT,nz,16,length(droplets.X))
 mpdata_tmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
 Xinit= droplets.X .+ 0
 
@@ -91,7 +90,7 @@ Xinit= droplets.X .+ 0
 for k in range(1,nz)
     drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
 
-    T = grid.states.T[k]
+    T = T_from_theta(grid.states.θ[k], grid.states.P[k], constants)
     qv_k = grid.states.qv[k]
     P_k = grid.states.P[k]
     S_env = sat(qv_k,P_k)/esat(T)
@@ -105,24 +104,26 @@ end
 sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
 plot_env_profiles(grid)
 
-nt = 1200
+nt = Int(t_max/dt)
 CWC = zeros(nz,nt)
 RWC = zeros(nz,nt)
 AWC = zeros(nz,nt)
-for i in 1:1200
+for i in 1:nt
+# for i in 1200:7200
     if i % 1 == 0
         println("Timestep: ", i)
     end
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,condensation_integrator,
-    coagdata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings,i)
-    CWC[:,i]=grid.diagnostics.cloud_LWC
-    RWC[:,i]=grid.diagnostics.rain_LWC
-    AWC[:,i]=grid.diagnostics.aerosol_LWC
+    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
+    coagdata,conddata,raddata,diagnosticsettings,prescribed_w, mpdata_tmp, mpdatasettings,constants,scmsettings,tkesettings,i)
+    # CWC[:,i]=grid.diagnostics.cloud_LWC
+    # RWC[:,i]=grid.diagnostics.rain_LWC
+    # AWC[:,i]=grid.diagnostics.aerosol_LWC
 end
 
 plot_env_profiles(grid)
+plot_output_timeseries(grid)
 
-@save "test_run3.jld2" CWC RWC AWC
+# @save "test_run3.jld2" CWC RWC AWC
 # savefig("scm_profiles_10min.png")
 
 # scatter(Xinit, droplets.X, label="Final Volume")

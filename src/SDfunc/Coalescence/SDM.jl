@@ -277,19 +277,19 @@ end
 
 @inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     cell = droplets.cell_id[j]
-    if droplets.grid_range[cell] == nothing
-        return nothing
-    end
+    # if droplets.grid_range[cell] == nothing
+    #     return nothing
+    # end
     Ns_c = length(droplets.grid_range[cell])
     scale = Ns_c * (Ns_c - 1) / div(Ns_c, 2)
     pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
     ϕ = rand()
     if ϕ < pαdt 
-        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data)
+        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data,cell)
     end
 end
 
-@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run) where FT<:AbstractFloat
+@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run,cell::Int) where FT<:AbstractFloat
 
     j,k = pair
     if droplets.ξ[j] < droplets.ξ[k]
@@ -303,14 +303,17 @@ end
     γ::FT  = ϕ < pα - pα_floor ? pα_floor +1 : pα_floor
 
     if γ >= (floor_ξj_div_ξk = floor(ξj / ξk))
-        # coag_data.deficit[α] += (γ - floor_ξj_div_ξk) * ξk
+        # coag_data.deficit[cell] += (γ - floor_ξj_div_ξk) * ξk
         γ = floor_ξj_div_ξk
     end
 
+    coag_data.collision_rate[cell] += γ * ξk
     if ξj > γ * ξk
         droplets.ξ[j] -= γ * ξk
         droplets.X[k] = γ * droplets.X[j] + droplets.X[k]
+
     else
+        
         droplets.ξ[j] = floor(ξk / 2)
         droplets.ξ[k] -= droplets.ξ[j]
         droplets.X[k] = droplets.X[j] = γ *droplets.X[j] + droplets.X[k]

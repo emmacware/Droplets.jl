@@ -10,6 +10,7 @@ export dM_dt
 export drkappakohler
 export v_term #move 
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
+export drrad_term
 
 ######################################################################
 # 
@@ -110,7 +111,7 @@ function drkohler(R, M, m, T, Senv, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv, rad_term,timestep)
+function drkappakohler(R,dry_r3,kappa,T,Senv,timestep;rad_term=0.0)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
     fk = FK(T)
@@ -122,11 +123,19 @@ function drkappakohler(R,dry_r3,kappa,T,Senv, rad_term,timestep)
     #    println(dr,' ',rad_term * fk / (constants.L*constants.ρl * denom))
     #end
 
-    dr += rad_term * fk / (constants.L*constants.ρl * denom) 
+    # dr += rad_term * fk / (constants.L*constants.ρl * denom) 
         
 
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
+
+function drrad_term(R, T, rad_term, timestep)
+    fk = FK(T)
+    denom = (fk + FD(T))
+    dr = rad_term * fk / (constants.L*constants.ρl * denom)
+    return R + dr * timestep > 0 ? dr : -R / timestep
+end
+
 
 
 """

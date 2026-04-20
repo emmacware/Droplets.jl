@@ -51,7 +51,7 @@ function read_radiation_tables()
     return lookup_lw,lookup_lw_cld,lookup_sw,lookup_sw_cld,idx_gases
 end
 
-function radiation_function!(grid,spatialsettings, diagnosticsettings, constants, dt, i)
+function radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)
     
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
@@ -74,7 +74,11 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     z_centers = grid.centers_z
 
     #Profiles
-    θ, qv, T, P, ρ = grid.states.θ, grid.states.qv, grid.states.T, grid.states.P, grid.states.ρ
+    θ, qv, P, ρ = grid.states.θ, grid.states.qv, grid.states.P, grid.states.ρ
+    grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
+    T = grid.states.T_tmp
+
+     #Read Radiation Files
     
 
     #overrides = (; grav = 9.80665, molmass_dryair = 0.028964, molmass_water = 0.018016, 
@@ -224,13 +228,15 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
 
-    grid.states.T .+= -hr_lay[:,1] * dt 
-    grid.states.θ .= theta_from_T(grid.states.T, grid.states.P, constants)
-    grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
+    grid.states.T_tmp .+= -hr_lay[:,1] * dt
+    raddata.cloud_heating_delta .+= -hr_lay[:,1] * dt
+
+    grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
+    grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
     
     ###Add in other updates
     
-    flux_net_droplet = zeros(FT,nlay,n_bnd)
+    # flux_net_droplet = zeros(FT,nlay,n_bnd)
     for ibnd in 1:n_bnd
         
         totplnk = view(lookup_lw.planck.tot_planck, :, ibnd)
@@ -249,7 +255,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
                 if cld_mask_lw[glay,1]
                     bb_flux = pi * Optics.interp1d_equispaced(t_lay[glay,1], t_planck, totplnk) 
                    
-                    flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (flux_up_arr[glay,ibnd] + flux_dn_arr[glay+1,ibnd])
+                    raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (flux_up_arr[glay,ibnd] + flux_dn_arr[glay+1,ibnd])
                     
                 end
             end
@@ -257,5 +263,5 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     end
 
 
-    return flux_net_droplet
+    return nothing#flux_net_droplet
 end
