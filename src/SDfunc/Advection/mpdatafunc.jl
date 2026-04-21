@@ -425,9 +425,20 @@ function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, set
 
     GCz = grid.wind.w * Δt ./ grid.dz
 
-    mpdata_step!(grid.states.qv, GCz,tmp,settings)
-    mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    ρqv = grid.states.ρ .* grid.states.qv
+    ρθ = grid.states.ρ .* grid.states.θ
+    ρe = grid.states.ρ .* grid.states.e
+
+    # mpdata_step!(grid.states.qv, GCz,tmp,settings)
+    # mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    mpdata_step!(ρqv, GCz,tmp,settings)
+    mpdata_step!(ρθ, GCz,tmp,settings)
+    mpdata_step!(ρe, GCz,tmp,settings)
+    mpdata_step!(grid.states.ρ, GCz,tmp,settings)
     # mpdata_step!(grid.states.e, GCz,tmp,settings)
+    grid.states.qv .= ρqv ./ grid.states.ρ
+    grid.states.θ .= ρθ ./ grid.states.ρ
+    grid.states.e .= ρe ./ grid.states.ρ
     
     # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
     grid.states.ρ .= ρ_calc_θ(grid.states.P,grid.states.θ,grid.states.qv,constants)
