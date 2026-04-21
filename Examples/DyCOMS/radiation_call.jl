@@ -108,7 +108,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     sfc_emis .= FT(0.98)
     sfc_alb_direct .= FT(0.06)
     sfc_alb_diffuse .= FT(0.06)
-    cos_zenith .= FT(0.86)
+    cos_zenith .= FT(-1.0)
     toa_flux .= FT(lookup_sw.solar_src_tot)
 
 
@@ -203,7 +203,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     inc_flux = nothing
     #inc_flux has dimensions of ncol x ngpt (so 1 x 256)
     #below is approx incoming lw flux by band
-    #inc_flux = [21.0, 31.0, 5.0, 15.0, 2.0, 0.03, 0.01, 0.04, 1.8, 3.1, 9.3, 0.6, 0.01, 0.4, 0.001, 0.002]
+    # inc_flux = [21.0, 31.0, 5.0, 15.0, 2.0, 0.03, 0.01, 0.04, 1.8, 3.1, 9.3, 0.6, 0.01, 0.4, 0.001, 0.002]
     slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
     # Setting up shortwave problem---------------------------------------
     inc_flux_diffuse = nothing
@@ -228,8 +228,8 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     compute_gray_heating_rate!(device,hr_lay,p_lev,ncol,nlay,flux_net,cp_d_,grav_)
 
-    grid.states.T_tmp .+= -hr_lay[:,1] * dt
-    raddata.cloud_heating_delta .+= -hr_lay[:,1] * dt
+    grid.states.T_tmp .+= hr_lay[:,1] * dt
+    raddata.cloud_heating_delta .+= hr_lay[:,1] * dt
 
     grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
     grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
