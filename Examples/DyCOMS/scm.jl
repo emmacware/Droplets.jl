@@ -1,11 +1,12 @@
 using Revise
-using JLD2
 using Droplets
 # using DifferentialEquations
+
 using OrdinaryDiffEq
 
 using Plots
 using ComponentArrays
+using JLD2
 # using OrdinaryDiffEqBDF
 include("initial_state_functions.jl")
 include("forward_solve.jl")
@@ -60,9 +61,9 @@ initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) +
 
 #Settings Structs
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output)
-coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt)
+coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt,kernel=hydrodynamic)
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
-mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux())
+mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux(),infinite_gauge=true)
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
 tkesettings = tke_settings{FT}(u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v)
 diagnosticsettings = diagnostic_settings()
@@ -76,7 +77,9 @@ droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialse
 
 # Create environmnent
 grid = initialize_scm_environment(nz, dz, P_surface, θl_initial, qt_initial, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings)
-
+grid.states.e .= 1.0 #from Ackerman et al 2009
+#add random perturbation -0.1 to 0.1 K to temperature field
+grid.states.θ .+= rand(Uniform(-0.1,0.1), length(grid.states.θ))
 
 # Create other needed data structures
 coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)

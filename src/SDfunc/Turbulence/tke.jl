@@ -1,6 +1,7 @@
 export tke_settings, implicit_diffuse!, turbulent_droplet_diffusion!
 export calculate_buoyancy_frequency, mixing_length_deardorff!
 export duynkerke_tke_timestep!, calculate_Ri, S2_flow_deformation
+export no_prog_tke_timestep!, calculate_Pr,smag_lilly_timestep!
 
 
 Base.@kwdef struct tke_settings{FT<:AbstractFloat}
@@ -95,9 +96,9 @@ function calculate_buoyancy_frequency(grid, k, constants) #where FT<:AbstractFlo
     km = max(k - 1, 1)
     dz_buo = k == nz ? dz : 2.0 * dz
     dz_buo = k == 1 ? dz : dz_buo
-    θv_k = θ[k] * (1 + 1/constants.ϵ * qv[k] - ql[k])
-    θv_up = θ[kp] * (1 + 1/constants.ϵ * qv[kp] - ql[kp])
-    θv_dn = θ[km] * (1 + 1/constants.ϵ * qv[km] - ql[km])
+    θv_k = θ[k] * (1 + 0.61 * qv[k] - ql[k])
+    θv_up = θ[kp] * (1 + 0.61 * qv[kp] - ql[kp])
+    θv_dn = θ[km] * (1 + 0.61 * qv[km] - ql[km])
     N2 = (g / θv_k) * (θv_up - θv_dn) / (dz_buo)
 
     return N2
@@ -139,13 +140,13 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     a[1] = 0               # no sub-diagonal for first cell
     b[1] = 1 + r/2*(K_face[1]+K_face[2])
     c[1] = -r/2 * K_face[2]
-    d[1] = ϕ[1] + r/2 * (K_face[2]*(ϕ[2]-ϕ[1]))
+    d[1] = ϕ[1] + r/2 * (K_face[2]*(ϕ[2]-ϕ[1]))#- r/2 * K_face[1]*(sfc_flux * dt / dz) 
     a[nz] = -r/2 * K_face[nz]
     b[nz] = 1 + r/2 * K_face[nz]
     c[nz] = 0
     d[nz] = ϕ[nz] - r/2 * K_face[nz] * (ϕ[nz] - ϕ[nz-1])
     if sfc_flux !== nothing
-        d[1] += dt * (sfc_flux / dz)
+        d[1] += dt * (sfc_flux / (dz))
     end
 
 
@@ -198,116 +199,26 @@ function Fc(Ri)
     end
 end
 
-# function tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
-#     nz = grid.nz
-#     dz = FT(grid.dz)
-#     e  = grid.states.e
 
-#     l   = zeros(FT, nz)
-#     K_m = zeros(FT, nz)
-#     K_h = zeros(FT, nz)
-#         # grid.area_per_grid
-#     delta = grid.dz
-
-#     grid.states.θ
-#     grid.states.qv
-#     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
-
-#     surface_zonal_momentum_flux = grid.wind.u[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
-#     surface_meridional_momentum_flux = grid.wind.v[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
-
-
-#     # mixing_length_blackadar!(l, grid.centers_z, tke.l_inf)
-#     mixing_length_deardorff!(l, grid, tke.l_inf, constants)
-#     mixing_length_nonlocal!(l, grid, tke.l_inf, constants)
-#     # ce1 = 0.19
-#     # ce2 = 0.51
-#     # ca = 0.1
-#     # c1 = 0.76^2 * ca
-#     # c2 = ce2 + c1
-#     # c3 = ca^(3/2)
-#     Pr = 0.42
-
-#     for k in 1:nz
-#         sqrte  = sqrt(max(e[k], tke.e_min))
-#         K_m[k] = tke.c_m * l[k] * sqrte
-#         S2 = S2_flow_deformation(grid, k, constants)
-#         # c_eps = ce1 + ce2 * (l[k]/delta)
-#         # Ri = calculate_Ri(grid, k, constants)
-#         # C_b = Ri/Pr < 1 ? sqrt(1 - Ri/Pr) : 0
-#         # K_m[k] = l[k] < 0 ? 0 : c3 * c_eps ^ (-1/2) * l[k]^2 * sqrt(S2) * C_b
-#         K_h[k] = K_m[k] / Pr 
-#         # K_h[k] = l[k]^2 * sqrt(S2) * Fc(Ri)
-
-#     end
-    
-
-
-
-#     implicit_diffuse!(grid.states.θ,  K_h, dt, dz, nz)
-#     implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz)
-#     implicit_diffuse!(grid.wind.u, K_h, dt, dz, nz,sfc_flux = surface_zonal_momentum_flux)
-#     implicit_diffuse!(grid.wind.v, K_h, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
-#     #calculate θl and qtot after diffusion using θ and qv
-#     grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
-#     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
-
-#     coriolis_parameter = 2 * constants.Ω * sind(31.5)
-#     du = zeros(FT, nz)
-#     dv = zeros(FT, nz)
-#     for k in 1:nz
-#         z = grid.centers_z[k]
-#         du[k] = coriolis_parameter * (grid.wind.v[k] - tke.geostrophic_v(z))
-#         dv[k] = -coriolis_parameter * (grid.wind.u[k] - tke.geostrophic_u(z))
-#     end
-
-#     grid.wind.u .+= du .* dt
-#     grid.wind.v .+= dv .* dt
-
-
-#     de = zeros(FT, nz)
-#     g  = FT(constants.gconst)
-    
-
-#     for k in 1:nz
-#         #Shear
-#         P_shear = K_m[k] * S2_flow_deformation(grid, k, constants)
-
-#         # Buoyancy
-#         P_buoy = - K_h[k] * calculate_buoyancy_frequency(grid, k, constants)
-
-
-#         # Dissipation
-#         # c_eps = 1.9*tke.c_m + (0.93 - 1.9*tke.c_m) * l[k] / delta
-#         c_eps = 0.19 + 0.51 * (l[k]/delta)
-#         ε= c_eps * max(e[k], FT(0))^FT(1.5) / l[k]
-
-#         de[k] = P_shear + P_buoy - ε
-#         # de[k] =P_buoy
-#     end
-
-
-
-#     e .+= dt .* de
-#     # e .+= dt .* de
-#     e .= max.(e, tke.e_min)
-#     e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
-
-#     # e_sfc = (tke.u_star^2 / sqrt(tke.c_m)) + 0.35*(P_buoy*1.5)^1/3 # Ackerman 1995 says this plus 0.35*w_star^2, 0 under stable conditions
-#     implicit_diffuse!(e, K_m, dt, dz, nz)#; sfc_value = e_sfc)
-#     e .= max.(e, tke.e_min)
-#     grid.states.e .= e
-#     # grid.states.T .= T_from_theta(grid.states.θ, grid.states.P, constants)
-#     # grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
-
-#     return nothing
-# end
+function calculate_Pr(grid, k, constants) #from Nishizawa 2015
+    Ri = calculate_Ri(grid, k, constants)
+    if Ri < 0
+        Pr= 0.7 * sqrt((1 - 16 *Ri)/(1-40*Ri))
+    elseif 0< Ri < 0.25
+        Pr= 0.7 * 1/(1-(1-0.7)*Ri/0.25)
+    else
+        Pr = 1
+    end
+    Pr = min(Pr, 2.0)
+    return Pr
+end
 
 
 function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
     nz = grid.nz
     dz = FT(grid.dz)
     e  = grid.states.e
+    ρ = grid.states.ρ .+ 0
 
     l   = zeros(FT, nz)
     K_m = zeros(FT, nz)
@@ -325,35 +236,39 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
 
     # mixing_length_blackadar!(l, grid.centers_z, tke.l_inf)
     mixing_length_deardorff!(l, grid, tke.l_inf, constants)
-    mixing_length_nonlocal!(l, grid, tke.l_inf, constants)
-    # ce1 = 0.19
-    # ce2 = 0.51
-    # ca = 0.1
-    # c1 = 0.76^2 * ca
-    # c2 = ce2 + c1
-    # c3 = ca^(3/2)
-    Pr = 0.42
+    # mixing_length_nonlocal!(l, grid, tke.l_inf, constants)
+
+    # Pr = 0.42 #this is dziekan 2019, find else?
+
+    
 
     for k in 1:nz
         sqrte  = sqrt(max(e[k], tke.e_min))
         K_m[k] = tke.c_m * l[k] * sqrte
-        S2 = S2_flow_deformation(grid, k, constants)
-        # c_eps = ce1 + ce2 * (l[k]/delta)
-        # Ri = calculate_Ri(grid, k, constants)
-        # C_b = Ri/Pr < 1 ? sqrt(1 - Ri/Pr) : 0
-        # K_m[k] = l[k] < 0 ? 0 : c3 * c_eps ^ (-1/2) * l[k]^2 * sqrt(S2) * C_b
+        # S2 = S2_flow_deformation(grid, k, constants)
+        Pr = calculate_Pr(grid, k, constants)
+
         K_h[k] = K_m[k] / Pr 
-        # K_h[k] = l[k]^2 * sqrt(S2) * Fc(Ri)
 
     end
     
 
-
-
+    #maybe should do rho*qv and rho*theta diffusion to be more consistent with mass conservation just like advection?
+    # ρθ = grid.states.ρ .* grid.states.θ
+    # ρqv = grid.states.ρ .* grid.states.qv
+    # ρu = grid.states.ρ .* grid.wind.u
+    # ρv = grid.states.ρ .* grid.wind.v
     implicit_diffuse!(grid.states.θ,  K_h, dt, dz, nz)
     implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz)
+    # implicit_diffuse!(ρθ,  K_h, dt, dz, nz)
+    # implicit_diffuse!(ρqv, K_h, dt, dz, nz)
+    # implicit_diffuse!(grid.states.ρ, K_h, dt, dz, nz)
     implicit_diffuse!(grid.wind.u, K_h, dt, dz, nz,sfc_flux = surface_zonal_momentum_flux)
     implicit_diffuse!(grid.wind.v, K_h, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
+    # grid.states.θ .= ρθ ./ grid.states.ρ
+    # grid.states.qv .= ρqv ./ grid.states.ρ
+    # grid.wind.u .= ρu ./ grid.states.ρ
+    # grid.wind.v .= ρv ./ grid.states.ρ
     #calculate θl and qtot after diffusion using θ and qv
     grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
@@ -374,50 +289,52 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     de = zeros(FT, nz)
     g  = FT(constants.gconst)
     
+    P_shear = zeros(FT, nz)
+    P_buoy = zeros(FT, nz)
+    P_diss = zeros(FT, nz)
+
 
     for k in 1:nz
         #Shear
-        P_shear = K_m[k] * S2_flow_deformation(grid, k, constants)
+        P_shear[k] = K_m[k] * S2_flow_deformation(grid, k, constants)
 
         # Buoyancy
-        P_buoy = - K_h[k] * calculate_buoyancy_frequency(grid, k, constants)
-
+        P_buoy[k] = - K_h[k] * calculate_buoyancy_frequency(grid, k, constants)
 
         # Dissipation
         # c_eps = 1.9*tke.c_m + (0.93 - 1.9*tke.c_m) * l[k] / delta
         c_eps = 0.19 + 0.51 * (l[k]/delta)
-        ε= c_eps * max(e[k], FT(0))^FT(1.5) / l[k]
+        # c_eps = 0.7
+        P_diss[k]= c_eps * e[k]^(3/2) / l[k]
 
-        de[k] = P_shear + P_buoy - ε
+        # de[k] = P_shear + P_buoy - ε
         # de[k] =P_buoy
     end
+    de .= P_shear + P_buoy - P_diss
 
 
 
     e .+= dt .* de
-    # e .+= dt .* de
     e .= max.(e, tke.e_min)
-    e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
 
-    # e_sfc = (tke.u_star^2 / sqrt(tke.c_m)) + 0.35*(P_buoy*1.5)^1/3 # Ackerman 1995 says this plus 0.35*w_star^2, 0 under stable conditions
-    implicit_diffuse!(e, K_m, dt, dz, nz)#; sfc_value = e_sfc)
+    
+
+    ρe = ρ .* e
+    implicit_diffuse!(ρe, K_m, dt, dz, nz)#; sfc_value = e_sfc)
+    e .= ρe ./ grid.states.ρ
+    e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
     e .= max.(e, tke.e_min)
     grid.states.e .= e
-    # grid.states.T .= T_from_theta(grid.states.θ, grid.states.P, constants)
-    # grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
 
     return nothing
 end
 
 
 
-function duynkerke_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
+function smag_lilly_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
     nz = grid.nz
     dz = FT(grid.dz)
-    e  = grid.states.e
-    eps = grid.states.eps
-
-
+    
     K_m = zeros(FT, nz)
     K_h = zeros(FT, nz)
 
@@ -426,13 +343,16 @@ function duynkerke_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT)
     surface_zonal_momentum_flux = grid.wind.u[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
     surface_meridional_momentum_flux = grid.wind.v[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
     
-    # Pr = 0.42
-    c_mu = 0.033
+    c_s = 0.17
+    delta = grid.dz
 
     for k in 1:nz
-        
-        K_h[k] = c_mu * e[k]^2 / (eps[k] + 1e-10)
-        K_m[k] = K_h[k] / 2.38
+        N2 = calculate_buoyancy_frequency(grid, k, constants)
+        S2 = S2_flow_deformation(grid, k, constants)
+        Pr = 0.42#calculate_Pr(grid, k, constants)
+        fb = N2 > 0 ? max(0, (1 - N2 /(Pr* S2))^1/2) : 1.0
+        K_m[k] = c_s^2 * delta^2 * sqrt(S2) * fb
+        K_h[k] = K_m[k] / Pr 
     end
     
 
@@ -457,51 +377,6 @@ function duynkerke_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT)
 
     grid.wind.u .+= du .* dt
     grid.wind.v .+= dv .* dt
-
-
-    de = zeros(FT, nz)
-    deps = zeros(FT, nz)
-    g  = FT(constants.gconst)
-    
-
-    for k in 1:nz
-        #Shear
-        P_shear = K_h[k] * S2_flow_deformation(grid, k, constants)
-
-        # Buoyancy
-        P_buoy = - K_h[k] * calculate_buoyancy_frequency(grid, k, constants)
-
-
-        # Dissipation
-        
-        Pterm = 1.75 * P_shear + 0.5 * P_buoy + P_buoy^2 / (eps[k] + 1e-10) - 2 * eps[k]
-        de[k] = P_shear + P_buoy - eps[k]
-        deps[k] = (eps[k]/(e[k]+1e-10)) * (Pterm)
-        # de[k] =P_buoy
-    end
-
-
-
-    e .+= dt .* de
-    # e .+= dt .* de
-    e .= max.(e, tke.e_min)
-    # eps .= max.(eps, tke.e_min)
-    # e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
-    eps .+= dt .* deps
-
-    e_sfc = c_mu^(-1/2)*tke.u_star^2
-    phi = 1 + 5 * grid.centers_z[1] ./ (195)
-    eps_sfc = tke.u_star^3*(phi/(0.4*grid.centers_z[1]) - 1/(0.4*195))
-    implicit_diffuse!(e, K_h, dt, dz, nz, sfc_value = e_sfc )
-    implicit_diffuse!(eps, K_m, dt, dz, nz, sfc_value = eps_sfc )
-    e .= max.(e, tke.e_min)
-    eps .= max.(eps, tke.e_min)
-    e[1] = e_sfc
-    eps[1] = eps_sfc
-    grid.states.e .= e
-    grid.states.eps .= eps
-    # grid.states.T .= T_from_theta(grid.states.θ, grid.states.P, constants)
-    # grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
 
     return nothing
 end
@@ -532,7 +407,7 @@ function turbulent_droplet_diffusion!(droplets::droplet_attributes_1d{FT},
         sigma = sqrt(grid.states.e[z] * 2/3)
 
         w_prime = sqrt(1- exp(-2*dt/tau)) * sigma
-        droplets.z_loc[k] .+= w_prime .* randn(length(k)) * dt
+        droplets.z_loc[k] .+= w_prime .* rand(Uniform(-0.1,0.1),length(k)) * dt
     end
     
     
