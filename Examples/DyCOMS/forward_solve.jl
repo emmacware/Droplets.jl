@@ -29,9 +29,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     end
 
     radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)
-    # flux_net_droplet = 0.0
-    #Update microphysics (condensation, coagulation)
-    # rad_term = zeros(FT, length(droplets.X))
+
     for t_cond in 1:100
         # println("Condensation substep: ", t_cond)
         grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
@@ -45,11 +43,13 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # Environmental advection 
     mpdata_scm!(grid, dt, mpdata_tmp, mpdatasettings,constants)
 
-    duynkerke_tke_timestep!(grid, tkesettings, constants, dt)
+    # duynkerke_tke_timestep!(grid, tkesettings, constants, dt)
+    no_prog_tke_timestep!(grid, tkesettings, constants, dt)
+    # smag_lilly_timestep!(grid, tkesettings, constants, dt)
     turbulent_droplet_diffusion!(droplets, grid, tkesettings, dt,coagdata,constants)
     
     #change sorting indexes if droplets moved
-    coagdata.I .= sort(coagdata.I, by = k -> droplets.cell_id[k])
+    coagdata.I .= sort(coagdata.I, by = k -> droplets.z_loc[k])
     recycle_precipitation!(droplets, grid, spatialsettings, diagnosticsettings, coagdata, constants,output_idx)
     coagdata.I .= sort(coagdata.I, by = k -> droplets.cell_id[k])
     for g in eachindex(droplets.grid_range)
@@ -144,32 +144,31 @@ end
 
 
 function update_surface_forcings!(grid, constants, scmsettings)
-    grid.states.ρ[1] = 1.21#ρ_ideal_gas(grid.states.P[1], grid.states.T_tmp[1], grid.states.qv[1], constants)
-    grid.states.T_tmp[1] = T_from_theta(grid.states.θ[1], grid.states.P[1], constants)
-    grid.states.T_tmp[1] += scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz)
-    grid.states.θ[1] = theta_from_T(grid.states.T_tmp[1], grid.states.P[1], constants)
-    grid.states.ρ[1] = ρ_ideal_gas(grid.states.P[1], grid.states.T_tmp[1], grid.states.qv[1], constants)
+    grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
+    dT = (scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz))
+    dθ = dT.* (constants.P0 ./ grid.states.P[1]).^(constants.Rd / constants.Cp_air)
+    grid.states.θ[1] += dθ #theta_from_T(grid.states.T_tmp[1], grid.states.P[1], constants)
+    # grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
     grid.states.qv[1] += scmsettings.surface_latent_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.L * grid.dz)
     #update ρ and theta after surface fluxes
-    # grid.states.θ[1] = theta_from_T(grid.states.T[1], grid.states.P[1], constants)
-    grid.states.ρ[1] = 1.21#ρ_ideal_gas(grid.states.P[1], grid.states.T_tmp[1], grid.states.qv[1], constants)
+    grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
     return
 end
 
 function recycle_precipitation!(droplets, grid, spatialsettings, diagnosticsettings, coagdata, constants,output_step)
     # Simple precipitation recycling: if droplets are in the bottom cell and larger than a threshold, reinitialize them as aerosols in the top cell, adding mass to surface precipitation diagnostic
-    start = findfirst(k -> droplets.cell_id[k] == 0, coagdata.I) 
+    start = findfirst(k -> droplets.z_loc[k] <= 0, coagdata.I) 
     if start == nothing
         return
     end
-    fallendrops_idx = start:findlast(k -> droplets.cell_id[k] == 0, coagdata.I)
+    fallendrops_idx = start:findlast(k -> droplets.z_loc[k] <= 0, coagdata.I)
     precip_mass = sum(droplets.X[fallendrops_idx] .* droplets.ξ[fallendrops_idx]) * constants.ρl
     grid.output.surface_precipitation[output_step] += precip_mass / (spatialsettings.area_per_grid * spatialsettings.dt_output) #
 
     # Reinitialize precipitating droplets as aerosols in the top cell
     droplets.X[fallendrops_idx] .= droplets.dry_r3[fallendrops_idx] # reset to dry mass
     droplets.cell_id[fallendrops_idx] .= spatialsettings.Nz # move to top
-    droplets.z_loc[fallendrops_idx] .+= spatialsettings.Z_max # move to top
+    droplets.z_loc[fallendrops_idx] .= spatialsettings.Z_max # move to top, should we move to below inversion?
     # droplets.ξ[fallendrops_idx] how to reset multiplicity? these are lots of initial drops that collided
     return
 end

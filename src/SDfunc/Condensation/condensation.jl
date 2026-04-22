@@ -8,7 +8,6 @@ export dXkohler_function_of_radius_activated,drkohler_activated
 export set_X_crit!,find_equilibrium_radius
 export dM_dt
 export drkappakohler
-export v_term #move 
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
 export drrad_term
 
@@ -273,7 +272,7 @@ f_m(Re_,ρ_air,T,P) = fvmol(Re_,Sc(ρ_air,T,P))
 f_q(Re_,ρ_air,T) = fvmol(Re_,Pr(ρ_air,T))
 
 function Reynoldsnumber(R,ρ_air,T)
-    return 2*R*ρ_air*v_term(R)/η_air(T,ρ_air)
+    return 2*R*ρ_air*terminal_v(R)/η_air(T,ρ_air)
 end
 
 function η_air(T,ρ_air) #kinematic viscosity of air
@@ -285,39 +284,20 @@ function C_drag(Re_)
     return 24*(1 + 0.15*Re_^0.687)/Re_ + 0.42/(1 + 42500*Re_^(-1.16))
 end
 
-# function terminal_vel(R,ρ_air) #nonlinear dependance on Re
-#     ρl = constants.ρl
-#     cd = C_drag(Re(R,ρ_air))
-#     g = constants.g
-#     return sqrt(8*R*(ρl-ρ_air)*g/(3*cd*ρ_air))
-# end
 
-# function v_term(radius)
-#     if radius < 30e-6
-#         vt = 1.19e6 * radius^2
-#     elseif radius < 60e-6
-#         vt = 8e3 * radius
-#     elseif radius < 2e-3
-#         vt = 2.01e3 * radius^0.5
+# function v_term(radius_m)
+#     radius_cm = radius_m * 1e2
+#     if radius_m < 30e-6
+#         vt = 1.19e6 * radius_cm^2
+#     elseif radius_m < 60e-6
+#         vt = 8e3 * radius_cm
+#     elseif radius_m < 2e-3
+#         vt = 2.01e3 * radius_cm^0.5
 #     else
 #         vt = 2.01e3 * 2e-3^0.5
 #     end 
-#     return vt
+#     return vt * 1e-2 #convert back to m/s
 # end
-
-function v_term(radius_m)
-    radius_cm = radius_m * 1e2
-    if radius_m < 30e-6
-        vt = 1.19e6 * radius_cm^2
-    elseif radius_m < 60e-6
-        vt = 8e3 * radius_cm
-    elseif radius_m < 2e-3
-        vt = 2.01e3 * radius_cm^0.5
-    else
-        vt = 2.01e3 * 2e-3^0.5
-    end 
-    return vt * 1e-2 #convert back to m/s
-end
 
 
 

@@ -30,7 +30,8 @@ const _tv_interp = linear_interpolation(_tv_d_table, _tv_v_table, extrapolation_
 function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
     d_cm = 2 * r * 100  # radius in meters → diameter in cm
     if d_cm < 0.0078
-        return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+        # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+        return 1.19e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
     else
         return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
     end
