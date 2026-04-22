@@ -81,10 +81,11 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
      #Read Radiation Files
     
 
-    #overrides = (; grav = 9.80665, molmass_dryair = 0.028964, molmass_water = 0.018016, 
+    # overrides = (; grav = 9.80665, molmass_dryair = 0.028964, molmass_water = 0.018016, 
     #            gas_constant = 287.0, kappa_d = 0.28571428571, Stefan = 5.67e-8, avogad = 6.02214076e+23)
-    #param_set = RRTMGPParameters(FT,overrides)
-    param_set = RRTMGPParameters(9.80665, 0.028964, 0.018016, 287.0, 0.28571428571, 5.67e-8, 6.02214076e+23 )
+    # param_set = RRTMGPParameters(FT,overrides)
+    # param_set = RRTMGPParameters(9.80665, 0.028964, 0.018016, 287.0, 0.28571428571, 5.67e-8, 6.02214076e+23 )
+    param_set = RRTMGPParameters(9.80665, 0.028964, 0.018016, 8.3144598, 0.28571428571, 5.67e-8, 6.02214076e+23 )
 
     ########This part could be a separate function######
     deg2rad = FT(π) / FT(180)
@@ -137,6 +138,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     t_lev = reshape(t_lev,:,1)
    
     t_sfc = Array{FT}(reshape([t_lev[1, 1]], 1))
+    t_sfc .=292
 
     # Reading volume mixing ratios
     vmrat = zeros(FT, ngas, nlay, 1)
@@ -167,6 +169,8 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     #Liquid water diagnostics (cloud_, aerosol_, and rain_)
     cld_path_liq .= grid.diagnostics.cloud_LWC * grid.dz * 1000 #units in g/m2
     cld_r_eff_liq .= grid.diagnostics.cloud_effective_radius * 1.0e6 #units in microns
+    bot_at_1 ? cld_path_liq .= cld_path_liq[lay_ind] : cld_path_liq .= cld_path_liq[lay_ind[end:-1:1]]
+    bot_at_1 ? cld_r_eff_liq .= cld_r_eff_liq[lay_ind] : cld_r_eff_liq .= cld_r_eff_liq[lay_ind[end:-1:1]]
     cld_frac[cld_path_liq.>0.0] .= 1.0
     cld_mask_lw[cld_frac.==1] .= true
     cld_mask_sw[cld_frac.==1] .= true
@@ -221,7 +225,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     solve_lw!(slv_lw, flux_up_arr, flux_dn_arr, as, lookup_lw, lookup_lw_cld, nothing, metric_scaling)
     solve_sw!(slv_sw, as, lookup_sw, lookup_sw_cld, nothing, metric_scaling)
 
-    flux_net = slv_lw.flux.flux_net + slv_sw.flux.flux_net
+    flux_net = slv_lw.flux.flux_net #+ slv_sw.flux.flux_net
     cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
     grav_ = FT(RRTMGP.Parameters.grav(param_set))
     hr_lay = DA{FT}(undef, nlay, ncol)

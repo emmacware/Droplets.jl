@@ -38,6 +38,7 @@ struct scm_outputs{FT<:AbstractFloat}
     time::Vector{FT}
     P::Matrix{FT}
     qv::Matrix{FT}
+    ql::Matrix{FT}
     ρ::Matrix{FT}
     θ::Matrix{FT}
     u::Matrix{FT}
@@ -66,6 +67,7 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
     n_output_steps = length(time)
     P = zeros(FT, num_levels, n_output_steps)
     qv = zeros(FT, num_levels, n_output_steps)
+    ql = zeros(FT, num_levels, n_output_steps)
     ρ = zeros(FT, num_levels, n_output_steps)
     θ = zeros(FT, num_levels, n_output_steps)
     u = zeros(FT, num_levels, n_output_steps)
@@ -88,7 +90,7 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
     surface_precipitation = zeros(FT, n_output_steps)
     LWP = zeros(FT, n_output_steps)
 
-    return scm_outputs{FT}(time,P,qv,ρ,θ,u,v,e,eps,aerosol_effective_radius,
+    return scm_outputs{FT}(time,P,qv,ql,ρ,θ,u,v,e,eps,aerosol_effective_radius,
         cloud_effective_radius,rain_effective_radius,aerosol_LWC,
         cloud_LWC,rain_LWC,
         collision_rate,

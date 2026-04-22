@@ -60,6 +60,7 @@ end
 function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata,conddata,raddata,spatial::spatial_settings_1d, t::Int) where FT
     grid.output.P[:,t] .= grid.states.P
     grid.output.qv[:,t] .= grid.states.qv
+    grid.output.ql[:,t] .= compute_ql_at_cell.(grid.states, collect(1:grid.nz))
     grid.output.ρ[:,t] .= grid.states.ρ
     grid.output.θ[:,t] .= grid.states.θ
     grid.output.u[:,t] .= grid.wind.u

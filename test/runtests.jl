@@ -38,3 +38,11 @@ end
 @testset "Condensation" begin
     include("condensation_tests.jl")
 end
+
+@testset "Turbulence" begin
+    include("turbulence_tests.jl")
+end
+
+@testset "MPDATA" begin
+    include("mpdata_tests.jl")
+end

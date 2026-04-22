@@ -37,27 +37,28 @@ function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
     end
 end
 
+
 #not working correctly:
-# #collision efficiency function
-# function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
-#     #Parameterization from Berry 1967
-#     #https://doi.org/10.1175/1520-0469(1967)024<0688:CDGBC>2.0.CO;2
-#     r = max(R1,R2)*1e6
-#     rs = min(R1,R2)*1e6
+#collision efficiency function
+function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
+    #Parameterization from Berry 1967
+    #https://doi.org/10.1175/1520-0469(1967)024<0688:CDGBC>2.0.CO;2
+    r = max(R1,R2)*1e6
+    rs = min(R1,R2)*1e6
 
-#     p = rs/r
-#     D = (-27)/(r^1.65)
-#     E = (-58)/(r^1.9)
-#     F = (15/r)^4 +1.13 
-#     G = (16.7/r)^8 +1 +0.004*r
+    p = rs/r
+    D = (-27)/(r^1.65)
+    E = (-58)/(r^1.9)
+    F = (15/r)^4 +1.13 
+    G = (16.7/r)^8 +1 +0.004*r
 
-#     Y = 1+p+D/(p^F)+E/((1-p)^G)
-#     if Y<0
-#         Y=0
-#     end
+    Y = 1+p+D/(p^F)+E/((1-p)^G)
+    if Y<0
+        Y=0
+    end
 
-#     return Y
-# end
+    return Y
+end
 
 #---------------------------------------------------------
 # Coalescence Kernels

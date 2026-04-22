@@ -1,3 +1,5 @@
+# using Pkg
+# Pkg.activate("./Examples/")
 using Revise
 using Droplets
 # using DifferentialEquations
@@ -22,9 +24,9 @@ Z_max = 1500.0 #m
 dz = 10.0 #m
 nz = Int(Z_max/dz)
 dt = 1.0 #s
-Ns_per_grid =16
+Ns_per_grid =64
 seed = 30
-t_max = 3600.0*6 #s
+t_max = 3600*6 #s
 t_output = 60.0*5 #s
 
 
@@ -61,7 +63,7 @@ initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) +
 
 #Settings Structs
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output)
-coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt,kernel=hydrodynamic)
+coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt,kernel=hydrodynamic,hydrodynamic_collision_eff_func=true)
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt)
 mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux(),infinite_gauge=true)
 scmsettings = scm_settings{FT}(Δt=dt, surface_latent_heat_flux=surface_latent_heat_flux, surface_sensible_heat_flux=surface_sensible_heat_flux)
@@ -77,7 +79,7 @@ droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialse
 
 # Create environmnent
 grid = initialize_scm_environment(nz, dz, P_surface, θl_initial, qt_initial, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings)
-grid.states.e .= 1.0 #from Ackerman et al 2009
+grid.states.e .= 0.1#1.0 #from Ackerman et al 2009
 #add random perturbation -0.1 to 0.1 K to temperature field
 grid.states.θ .+= rand(Uniform(-0.1,0.1), length(grid.states.θ))
 
@@ -113,7 +115,7 @@ RWC = zeros(nz,nt)
 AWC = zeros(nz,nt)
 for i in 1:nt
 # for i in 1200:7200
-    if i % 1 == 0
+    if i*dt % 1 == 0
         println("Timestep: ", i)
     end
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
@@ -121,6 +123,10 @@ for i in 1:nt
     # CWC[:,i]=grid.diagnostics.cloud_LWC
     # RWC[:,i]=grid.diagnostics.rain_LWC
     # AWC[:,i]=grid.diagnostics.aerosol_LWC
+    if i % 1200 == 0
+        plot_env_profiles(grid)
+        title!("Timestep: $(i*dt) seconds")
+    end
 end
 
 plot_env_profiles(grid)

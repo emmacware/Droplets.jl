@@ -85,8 +85,12 @@ function init_droplets_dycoms_scm(dist,settings::coag_settings{FT},
 end
 
 function plot_env_profiles(grid)
-    p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
-    p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="q_v", legend=false)
+    ql = compute_ql_at_cell.(grid.states, collect(1:grid.nz))
+    p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", label="θ")
+    p1 = plot!(θl_θ.(grid.states.θ,ql,constants),grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", label="θl")
+    p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", label="qv")
+    p2 = plot!(ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="ql")
+    p2 = plot!(grid.states.qv*1000 .+ ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="qt")
     p6 = plot((grid.diagnostics.cloud_LWC+grid.diagnostics.rain_LWC+grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC")
     p6 = plot!((grid.diagnostics.aerosol_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", label="Aerosol")
     p6 = plot!((grid.diagnostics.cloud_LWC)*1000,grid.centers_z, ylabel="Height (m)", xlabel="LWC", title="LWC", label="Cloud")
@@ -98,21 +102,35 @@ function plot_env_profiles(grid)
     grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
     p5 = plot(grid.states.T_tmp,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
     p5 = plot!(T_virtual.(grid.states.T_tmp, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
-    plot(p1, p2, p3,p4,p5,p6, layout=(3,2), size=(800,900))
+    
+    p7 = plot(grid.states.e,grid.centers_z, ylabel="Height (m)", xlabel="Turbulent Kinetic Energy (J/kg)", title="TKE", legend=false)
+
+    plot(p1, p2, p3,p4,p5,p6,p7, layout=(4,2), size=(800,900))
 end
 
 function plot_output_timeseries(grid)
-    time = grid.output.time
+    time = grid.output.time ./ 3600
+    t_skips = Int(floor(length(time)/5))
     z_centers = grid.centers_z
-    p1 = plot(grid.output.θ[:,1:24:end], z_centers, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
-    p2 = plot(grid.output.qv[:,1    :24:end]*1000, z_centers, ylabel="Height (m)", xlabel="q_tot (g/kg)", title="qv", legend=false)
-    p3 = plot(grid.output.cloud_heating_rate[:,1:24:end]*3600, z_centers, ylabel="Height (m)", xlabel="Cloud Heating Rate (K/hr)", title="Cloud Heating Rate", legend=false)
+    p1 = plot(grid.output.θ[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
+    p2 = plot(grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="qv (g/kg)", title="qv", legend=false)
+    p3 = plot(grid.output.cloud_heating_rate[:,1:t_skips:end]*3600, z_centers, ylabel="Height (m)", xlabel="Cloud Heating Rate (K/hr)", title="Cloud Heating Rate", legend=false)
     LWP = grid.output.LWP
-    p4 = plot(time, LWP, xlabel="Time (s)", ylabel="LWP (g/m2)", title="LWP Timeseries", legend=false)
-    p5 = plot(time, grid.output.surface_precipitation, xlabel="Time (s)", ylabel="Surface Precipitation (kg/m2/s)", title="Surface Precipitation Timeseries", legend=false)
-    p6 = plot(grid.output.cloud_LWC[:,1:24:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/kg)", title="Cloud LWC", legend=false)
-    p6 = plot!(grid.output.rain_LWC[:,1:24:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
-    plot(p1, p2, p3, p4,p5, layout=(3,2), size=(800,600))
+    p4 = plot(time, LWP*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label = "Total")
+    LWP_cloud = sum(grid.output.cloud_LWC, dims=1)' .* grid.dz
+    p4 = plot!(time, LWP_cloud*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Cloud")
+    LWP_rain = sum(grid.output.rain_LWC, dims=1)' .* grid.dz
+    p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
+    LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
+    p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
+    p5 = plot(time, grid.output.surface_precipitation /1000 * 3600, xlabel="Time (h)", ylabel="Surface Precipitation (mm/hr)", title="Surface Precipitation Timeseries", legend=false)
+    p6 = plot(grid.output.cloud_LWC[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/m3)", title="Cloud LWC", legend=false)
+    # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
+    
+    θl = θl_θ.(grid.output.θ[:,1:t_skips:end], grid.output.ql[:,1:t_skips:end], constants)
+    p7 = plot(θl, z_centers, ylabel="Height (m)", xlabel="Liquid Water Potential Temperature", title="θl", legend=false)
+    p8 = plot(grid.output.ql[:,1:t_skips:end]*1000 .+ grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="q tot(g/kg)", title="qtot", legend=false)
+    plot(p1, p2,p7,p8, p3, p4,p5,p6, layout=(4,2), size=(600,900))
 end
 # function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
 #     nz = grid.nz

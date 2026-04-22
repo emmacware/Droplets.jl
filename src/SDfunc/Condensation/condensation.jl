@@ -9,7 +9,7 @@ export set_X_crit!,find_equilibrium_radius
 export dM_dt
 export drkappakohler
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
-export drrad_term
+export drrad_term, dXkappakohler_newtonraphson
 
 ######################################################################
 # 
@@ -126,6 +126,34 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,timestep;rad_term=0.0)
         
 
     return R + dr * timestep > 0 ? dr : -R / timestep
+end
+
+function dXkappakohler_newtonraphson(R, dry_r3, kappa, T, Senv, timestep, iters)
+    # Fully implicit solve for R²_new via Newton-Raphson.
+    # Find u = R²_new such that g(u) = u - R²_old - dt·F(u) = 0,
+    # where F(u) = dR²/dt = 2(S-1 - A/√u + B/u^{3/2}) / denom.
+    # g'(u) = 1 - dt·F'(u),  F'(u) = (A/r³ - 3B/r⁵) / denom  (r = √u)
+    A = akk(T)
+    b = kappa * dry_r3
+    denom = FK(T) + FD(T)
+    R2_old = R^2
+
+    # Initial guess: explicit Euler step in R²
+    F0 = 2 * (Senv - 1.0 - A/R + b/R^3) / denom
+    R2 = max(R2_old + F0 * timestep, R2_old * 1e-4)
+
+    for _ in 1:iters
+        r  = sqrt(R2)
+        F  = 2 * (Senv - 1.0 - A/r + b/r^3) / denom
+        g  = R2 - R2_old - timestep * F
+        gp = 1.0 - timestep * (A/r^3 - 3*b/r^5) / denom
+        δ  = g / gp
+        R2 -= δ
+        R2  = max(R2, R2_old * 1e-6)   # keep positive
+        abs(δ) < 1e-18 * R2 && break
+    end
+
+    return radius_to_volume(sqrt(R2)) - radius_to_volume(R)
 end
 
 function drrad_term(R, T, rad_term, timestep)
@@ -425,6 +453,46 @@ function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=10
     
     # @warn "Equilibrium radius did not converge for S_env=$S_env, T=$T"
     # droplets.X[i] = radius_to_volume(dry_r)
+    return
+end
+
+
+
+function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=100, tol=1e-12)
+    #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
+    dry_r3 = droplets.dry_r3[drop_idx]
+    dry_r = (dry_r3)^(1/3)
+    R_guess = max(dry_r * 2, 1e-8)
+    
+    for i in 1:4
+        
+        kelvin_term = akk(T) / R_guess
+        kappa_term = kappa * dry_r3 / (R_guess^3)
+        
+
+        f = S_env - 1.0 - kelvin_term + kappa_term
+        
+        if abs(f) < tol
+            droplets.X[drop_idx] = radius_to_volume(R_guess)
+            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
+            return
+        end
+
+        dS_dR = (-kelvin_term/R_guess + 3*kappa_term/R_guess)
+        R_new = R_guess - f / dS_dR
+          
+        R_new = max(R_new, dry_r * 1.01)  # Must be larger than dry radius
+        R_new = min(R_new, 1e-3)          # Cap at 1mm
+        
+        if abs(R_new - R_guess) < tol
+            droplets.X[drop_idx] = radius_to_volume(R_new)
+            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
+            return
+        end
+        
+        R_guess = R_new
+    end
+    
     return
 end
 

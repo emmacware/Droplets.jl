@@ -30,10 +30,10 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
     radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)
 
-    for t_cond in 1:100
+    for t_cond in 1:10
         # println("Condensation substep: ", t_cond)
         grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
-        condensation_time_step_spatial!(droplets, grid.states,nz, dt/100, conddata, constants,condensationsettings,spatialsettings,coagdata,raddata,i)
+        condensation_time_step_spatial!(droplets, grid.states,nz, dt/10, conddata, constants,condensationsettings,spatialsettings,coagdata,raddata,i)
     end
     if i > 3600
         coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
@@ -46,6 +46,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # duynkerke_tke_timestep!(grid, tkesettings, constants, dt)
     no_prog_tke_timestep!(grid, tkesettings, constants, dt)
     # smag_lilly_timestep!(grid, tkesettings, constants, dt)
+    # smag_lilly_ca_timestep!(grid, tkesettings, constants, dt)
     turbulent_droplet_diffusion!(droplets, grid, tkesettings, dt,coagdata,constants)
     
     #change sorting indexes if droplets moved
@@ -63,7 +64,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
     
     #surface forcings
-    update_surface_forcings!(grid, constants, scmsettings)
+    # update_surface_forcings!(grid, constants, scmsettings)
 
 
     return nothing
@@ -117,9 +118,10 @@ function condensation_time_step_spatial!(droplets, state, nz, Δtg,condensation,
             S_env = min(S_env, 1.01) # spinup supersat cap
         end
         # dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg,rad_term=rad_term[k]) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
-        dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg,rad_term=0.0)#raddata.rad_term[k]) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
+        # dR = drkappakohler.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg,rad_term=0.0)#raddata.rad_term[k]) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
+        dX = dXkappakohler_newtonraphson.(R, droplets.dry_r3[k], condsettings.kappa, T_k, S_env, Δtg,10)#raddata.rad_term[k]) #giving up on DifferentialEquations for now, probably will put in more accurate integrator
         # dR_rad = drrad_term.(R, T_k, raddata.cond_rad_term[k], Δtg)
-        dX = (4 * pi .* R.^2 .* dR) .* Δtg
+        # dX = (4 * pi .* R.^2 .* dR) .* Δtg
         # dX_rad = (4 * pi .* R.^2 .* dR_rad) .* Δtg
         dry_vol = radius_to_volume.((droplets.dry_r3[k]).^(1/3))
         ratio = 0.0#dX_rad ./ (dX .+ dX_rad) # if they are opposite maybe need to handle differently? for now just a start, need to clean this anyways
@@ -143,15 +145,31 @@ function condensation_time_step_spatial!(droplets, state, nz, Δtg,condensation,
 end
 
 
+# function update_surface_forcings!(grid, constants, scmsettings)
+#     grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
+#     dT = (scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz))
+#     dθ = dT.* (constants.P0 ./ grid.states.P[1]).^(constants.Rd / constants.Cp_air)
+#     grid.states.θ[1] += dθ #theta_from_T(grid.states.T_tmp[1], grid.states.P[1], constants)
+#     # grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
+#     mass_evap = scmsettings.surface_latent_heat_flux * scmsettings.Δt / (constants.L * grid.dz)
+#     mass_per_volume = grid.states.ρ[1]
+#     mass_vapor = grid.states.qv[1] * mass_per_volume
+#     grid.states.qv[1] = (mass_vapor + mass_evap) / (mass_per_volume + mass_evap) # update qv based on added vapor mass, assuming it displaces an equal mass of air (so total mass in cell increases by mass_evap)    #update ρ and theta after surface fluxes
+#     grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
+#     return
+# end
+
 function update_surface_forcings!(grid, constants, scmsettings)
-    grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
-    dT = (scmsettings.surface_sensible_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.Cp_air * grid.dz))
-    dθ = dT.* (constants.P0 ./ grid.states.P[1]).^(constants.Rd / constants.Cp_air)
-    grid.states.θ[1] += dθ #theta_from_T(grid.states.T_tmp[1], grid.states.P[1], constants)
-    # grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
-    grid.states.qv[1] += scmsettings.surface_latent_heat_flux * scmsettings.Δt / (grid.states.ρ[1] * constants.L * grid.dz)
-    #update ρ and theta after surface fluxes
-    grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1],grid.states.θ[1],grid.states.qv[1],constants)
+    ρ = ρ_calc_θ(grid.states.P[1], grid.states.θ[1], grid.states.qv[1], constants)
+    Π = (grid.states.P[1] / constants.P0)^(constants.Rd / constants.Cp_air)
+
+    grid.states.θ[1] += scmsettings.surface_sensible_heat_flux * scmsettings.Δt /
+                         (ρ * constants.Cp_air * Π * grid.dz)
+
+    mass_evap = scmsettings.surface_latent_heat_flux * scmsettings.Δt / (constants.L * grid.dz)
+    grid.states.qv[1] += mass_evap / ρ
+
+    grid.states.ρ[1] = ρ_calc_θ(grid.states.P[1], grid.states.θ[1], grid.states.qv[1], constants)
     return
 end
 

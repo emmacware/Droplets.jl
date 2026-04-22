@@ -1,15 +1,22 @@
 export tke_settings, implicit_diffuse!, turbulent_droplet_diffusion!
 export calculate_buoyancy_frequency, mixing_length_deardorff!
 export duynkerke_tke_timestep!, calculate_Ri, S2_flow_deformation
-export no_prog_tke_timestep!, calculate_Pr,smag_lilly_timestep!
+export no_prog_tke_timestep!, calculate_Pr, smag_lilly_timestep!, smag_lilly_ca_timestep!
+export find_bl_height
 
 
 Base.@kwdef struct tke_settings{FT<:AbstractFloat}
-    c_m::FT    = FT(0.1)      # momentum diffusivity constant
-    c_ε::FT    = FT(0.93)     # dissipation constant
-    l_inf::FT  = FT(70.0)     # Blackadar asymptotic mixing length (m)
-    e_min::FT  = FT(1e-6)     # TKE floor (m²/s²)
-    u_star::FT = FT(0.25)     # surface friction velocity (m/s)
+    c_m::FT     = FT(0.1)      # momentum diffusivity constant
+    c_ε::FT     = FT(0.93)     # dissipation constant
+    l_inf::FT   = FT(70.0)     # Blackadar asymptotic mixing length (m)
+    e_min::FT   = FT(1e-9)     # TKE floor (m²/s²)
+    u_star::FT  = FT(0.25)     # surface friction velocity (m/s)
+    c_smag::FT  = FT(0.17)     # Smagorinsky constant
+    Pr_t::FT    = FT(1/3)      # turbulent Prandtl number (neutral stratification)
+    delta_h::FT = FT(100.0)    # horizontal grid spacing for filter scale (m)
+    SHF::FT     = FT(16)      # surface sensible heat flux (W/m²)
+    LHF::FT     = FT(93)      # surface latent heat flux (W/m²)
+    c_γ::FT     = FT(7.2)      # Holtslag & Moeng (1991) counter-gradient constant
     geostrophic_u::Function = z -> FT(0)  # geostrophic u wind profile (m/s)
     geostrophic_v::Function = z -> FT(0)  # geostrophic v wind profile (m/s)
 end
@@ -155,16 +162,7 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     c_star[1] = c[1] / b[1]
     d_star[1] = d[1] / b[1]
     bet = b[1]
-    # for k in 2:nz-1
-    #     # denom = b[k] - a[k] * c_star[k-1]
-    #     # c_star[k] = c[k] / denom
-    # end
 
-    # for k in 2:nz
-    #     numerator = d[k] - a[k] * d_star[k-1]
-    #     denom = b[k] - a[k] * c_star[k-1]
-    #     d_star[k] = numerator / denom
-    # end
     for k in 2:nz
         # c_star[k] = c[k-1]/bet
         
@@ -214,6 +212,58 @@ function calculate_Pr(grid, k, constants) #from Nishizawa 2015
 end
 
 
+function find_bl_height(grid)
+    nz = grid.nz
+    dz = grid.dz
+    max_dθdz = -Inf
+    h_idx = nz
+    for k in 2:nz
+        dθ_dz = (grid.states.θ[k] - grid.states.θ[k-1]) / dz
+        if dθ_dz > max_dθdz
+            max_dθdz = dθ_dz
+            h_idx = k
+        end
+    end
+    h = (h_idx - 1) * dz   # height of inversion base (lower face of cell h_idx)
+    return h_idx, h
+end
+
+# Non-local counter-gradient correction for θ and qv (Holtslag & Moeng 1991).
+# Adds the flux-divergence tendency -∂(K_h γ)/∂z to cells within the boundary layer.
+# γ_θ = c_γ * H_kin / (w* h),  w* = (g/θ_sfc * H_v * h)^(1/3)
+# Only active when the surface virtual heat flux H_v > 0 (unstable/convective).
+function apply_counter_gradient!(grid, tke::tke_settings{FT}, K_h::Vector{FT}, constants, dt::FT) where FT
+    (tke.SHF == 0 && tke.LHF == 0) && return
+
+    nz  = grid.nz
+    dz  = FT(grid.dz)
+    ρ   = grid.states.ρ
+    g   = FT(constants.gconst)
+
+    H_kin = tke.SHF / (ρ[1] * constants.Cp_air)          # kinematic sensible heat flux  [K m/s]
+    E_kin = tke.LHF / (ρ[1] * constants.L)                # kinematic moisture flux        [kg/kg m/s]
+    H_v   = H_kin + FT(0.61) * grid.states.θ[1] * E_kin  # virtual heat flux
+
+    H_v <= 0 && return
+
+    h_idx, h = find_bl_height(grid)
+    h <= dz  && return
+
+    w_star = cbrt(g / grid.states.θ[1] * H_v * h)
+
+    γ_θ  = tke.c_γ * H_kin / (w_star * h)
+    γ_qv = tke.c_γ * E_kin / (w_star * h)
+
+    # Tendency: ∂ϕ/∂t|_nl = -∂(K_h γ)/∂z
+    # Non-local flux K_h γ is zero at the surface (k=1 lower face) and at the BL top (h_idx upper face).
+    for k in 1:h_idx-1
+        K_up = k < h_idx-1 ? FT(0.5)*(K_h[k] + K_h[k+1]) : FT(0)
+        K_dn = k > 1       ? FT(0.5)*(K_h[k-1] + K_h[k]) : FT(0)
+        grid.states.θ[k]  -= dt * (K_up - K_dn) * γ_θ  / dz
+        grid.states.qv[k] -= dt * (K_up - K_dn) * γ_qv / dz
+    end
+end
+
 function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
     nz = grid.nz
     dz = FT(grid.dz)
@@ -228,10 +278,10 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
 
     grid.states.θ
     grid.states.qv
-    grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
+    # grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
 
-    surface_zonal_momentum_flux = grid.wind.u[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
-    surface_meridional_momentum_flux = grid.wind.v[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
+    surface_zonal_momentum_flux = -grid.wind.u[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
+    surface_meridional_momentum_flux = - grid.wind.v[1]*tke.u_star^2 / sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
 
 
     # mixing_length_blackadar!(l, grid.centers_z, tke.l_inf)
@@ -248,7 +298,8 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
         # S2 = S2_flow_deformation(grid, k, constants)
         Pr = calculate_Pr(grid, k, constants)
 
-        K_h[k] = K_m[k] / Pr 
+        # K_h[k] = K_m[k] / Pr 
+        K_h[k] = K_m[k] *(1 + 2 * l[k] /delta) #deardorff 1980
 
     end
     
@@ -263,8 +314,8 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     # implicit_diffuse!(ρθ,  K_h, dt, dz, nz)
     # implicit_diffuse!(ρqv, K_h, dt, dz, nz)
     # implicit_diffuse!(grid.states.ρ, K_h, dt, dz, nz)
-    implicit_diffuse!(grid.wind.u, K_h, dt, dz, nz,sfc_flux = surface_zonal_momentum_flux)
-    implicit_diffuse!(grid.wind.v, K_h, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
+    implicit_diffuse!(grid.wind.u, K_m, dt, dz, nz,sfc_flux = surface_zonal_momentum_flux)
+    implicit_diffuse!(grid.wind.v, K_m, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
     # grid.states.θ .= ρθ ./ grid.states.ρ
     # grid.states.qv .= ρqv ./ grid.states.ρ
     # grid.wind.u .= ρu ./ grid.states.ρ
@@ -272,6 +323,8 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     #calculate θl and qtot after diffusion using θ and qv
     grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
+
+    apply_counter_gradient!(grid, tke, K_h, constants, dt)
 
     coriolis_parameter = 2 * constants.Ω * sind(31.5)
     du = zeros(FT, nz)
@@ -292,7 +345,7 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     P_shear = zeros(FT, nz)
     P_buoy = zeros(FT, nz)
     P_diss = zeros(FT, nz)
-
+    grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
 
     for k in 1:nz
         #Shear
@@ -312,6 +365,14 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     end
     de .= P_shear + P_buoy - P_diss
 
+    # for k in 1:nz
+    #     c_eps      = 0.19 + 0.51 * (l[k] / delta)
+    #     diss_coeff = c_eps * sqrt(max(e[k], tke.e_min)) / l[k]
+    #     source     = K_m[k] * S2_flow_deformation(grid, k, constants) -
+    #                  K_h[k] * calculate_buoyancy_frequency(grid, k, constants)
+    #     e[k]       = (e[k] + dt * source) / (1 + dt * diss_coeff)
+    # end
+    # e .= max.(e, tke.e_min)
 
 
     e .+= dt .* de
@@ -320,9 +381,10 @@ function no_prog_tke_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) w
     
 
     ρe = ρ .* e
-    implicit_diffuse!(ρe, K_m, dt, dz, nz)#; sfc_value = e_sfc)
+    implicit_diffuse!(ρe, K_h, dt, dz, nz)#; sfc_value = e_sfc)
     e .= ρe ./ grid.states.ρ
-    e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
+    # e[1] = max.(e[1], tke.u_star^2 * tke.c_ε)
+    e[1] = tke.u_star^2 / sqrt(tke.c_m)
     e .= max.(e, tke.e_min)
     grid.states.e .= e
 
@@ -382,6 +444,69 @@ function smag_lilly_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) wh
 end
 
 
+function smag_lilly_ca_timestep!(grid, tke::tke_settings{FT}, constants, dt::FT) where FT
+    nz = grid.nz
+    dz = FT(grid.dz)
+
+    K_m = zeros(FT, nz)
+    K_h = zeros(FT, nz)
+
+    grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
+
+    ρ     = grid.states.ρ .+ 0
+    speed = sqrt(grid.wind.u[1]^2 + grid.wind.v[1]^2)
+    surface_zonal_momentum_flux      = ρ[1] * grid.wind.u[1] * tke.u_star^2 / speed
+    surface_meridional_momentum_flux = ρ[1] * grid.wind.v[1] * tke.u_star^2 / speed
+
+    c_smag = tke.c_smag
+    Pr_t   = tke.Pr_t
+    delta  = cbrt(tke.delta_h^2 * dz)   # geometric mean filter scale (Δx*Δy*Δz)^(1/3)
+
+    for k in 1:nz
+        N2     = calculate_buoyancy_frequency(grid, k, constants)
+        S2     = S2_flow_deformation(grid, k, constants)
+        S_norm = sqrt(max(S2, FT(0)))
+        Ri     = N2 / (S2 + eps(FT))
+        fb     = Ri ≤ 0 ? FT(1) : max(FT(0), 1 - Ri / Pr_t)^(FT(1/4))  # Lilly (1967) stability correction
+        νt     = c_smag^2 * (delta * fb)^2 * S_norm
+        K_m[k] = νt
+        K_h[k] = νt / Pr_t
+    end
+
+    # diffuse ρ-weighted quantities: ∂(ρϕ)/∂t = ∂/∂z(ρ K ∂ϕ/∂z)
+    ρθ  = ρ .* grid.states.θ
+    ρqv = ρ .* grid.states.qv
+    ρu  = ρ .* grid.wind.u
+    ρv  = ρ .* grid.wind.v
+
+    implicit_diffuse!(ρθ,  K_h, dt, dz, nz)
+    implicit_diffuse!(ρqv, K_h, dt, dz, nz)
+    implicit_diffuse!(ρu,  K_m, dt, dz, nz, sfc_flux = surface_zonal_momentum_flux)
+    implicit_diffuse!(ρv,  K_m, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
+
+    grid.states.θ .= ρθ  ./ ρ
+    grid.states.qv .= ρqv ./ ρ
+    grid.wind.u   .= ρu  ./ ρ
+    grid.wind.v   .= ρv  ./ ρ
+
+    grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
+    grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, collect(1:nz))
+
+    coriolis_parameter = 2 * constants.Ω * sind(31.5)
+    du = zeros(FT, nz)
+    dv = zeros(FT, nz)
+    for k in 1:nz
+        z = grid.centers_z[k]
+        du[k] =  coriolis_parameter * (grid.wind.v[k] - tke.geostrophic_v(z))
+        dv[k] = -coriolis_parameter * (grid.wind.u[k] - tke.geostrophic_u(z))
+    end
+    grid.wind.u .+= du .* dt
+    grid.wind.v .+= dv .* dt
+
+    return nothing
+end
+
+
 function turbulent_droplet_diffusion!(droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT, coagdata, constants) where FT
     #edited from grabowski and abade 2017 eqn 10, Dziekan 2019 uses this too.
@@ -391,7 +516,7 @@ function turbulent_droplet_diffusion!(droplets::droplet_attributes_1d{FT},
     Z_max = FT(nz) * dz
     Ct = 1.5
     l  = zeros(FT, nz)
-    ql = compute_ql_at_cell.(grid.states, 1:nz)
+    grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, 1:nz)
     # θ = theta_from_T(grid.states.T, grid.states.P, constants)
     θ = grid.states.θ
     mixing_length_deardorff!(l, grid, tke.l_inf,constants)
