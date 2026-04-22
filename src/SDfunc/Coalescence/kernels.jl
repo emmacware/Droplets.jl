@@ -19,23 +19,21 @@ Gunn and Kinzer, (1949), https://doi.org/10.1175/1520-0469(1949)006<0243:TTVOFF>
 The terminal velocity of the droplet in meters/second.
 
 """
-function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity 
+const _tv_d_table = [0.078,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.2,1.4,1.6,1.8,2.0,2.2,2.4,2.6,
+    2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.2,4.4,4.6,4.8,5.0,5.2,5.4,5.6,5.8] ./ 10  # diameter in cm
 
+const _tv_v_table = [18,27,72,117,162,206,247,287,327,367,403,464,517,565,609,649,690,
+    727,757,782,806,826,844,860,872,883,892,898,903,907,909,912,914,916,917]  # velocity in cm/s
 
-    if 2*r*100<0.0078
-        tv=1.2*10e6*(r*100)^2
-        tv = tv/100
-    else    
-        d_table = [0.078,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.2,1.4,1.6,1.8,2.0,2.2,2.4,2.6,
-            2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.2,4.4,4.6,4.8,5.0,5.2,5.4,5.6,5.8]./10
+const _tv_interp = linear_interpolation(_tv_d_table, _tv_v_table, extrapolation_bc=Line())
 
-        v_table = [18,27,72,117,162,206,247,287,327,367,403,464,517,565,609,649,690,
-        727,757,782,806,826,844,860,872,883,892,898,903,907,909,912,914,916,917]
-
-        interpo_extrapo = linear_interpolation(d_table,v_table,extrapolation_bc=Line())
-        tv = interpo_extrapo(2*r*100)/100 # radius in meters to diameter in cm, then velocity cm->m
+function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
+    d_cm = 2 * r * 100  # radius in meters → diameter in cm
+    if d_cm < 0.0078
+        return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+    else
+        return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
     end
-    return tv
 end
 
 #not working correctly:

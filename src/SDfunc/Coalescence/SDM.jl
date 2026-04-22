@@ -280,8 +280,8 @@ end
     # if droplets.grid_range[cell] == nothing
     #     return nothing
     # end
-    Ns_c = length(droplets.grid_range[cell])
-    scale = Ns_c * (Ns_c - 1) / div(Ns_c, 2)
+    Ns_c = length(droplets.grid_range[cell]) #check
+    scale = Ns_c * (Ns_c - 1)/2 / div(Ns_c, 2)
     pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
     ϕ = rand()
     if ϕ < pαdt 
@@ -311,12 +311,14 @@ end
     if ξj > γ * ξk
         droplets.ξ[j] -= γ * ξk
         droplets.X[k] = γ * droplets.X[j] + droplets.X[k]
+        droplets.dry_r3[k] = γ * droplets.dry_r3[j] + droplets.dry_r3[k]
 
     else
         
         droplets.ξ[j] = floor(ξk / 2)
         droplets.ξ[k] -= droplets.ξ[j]
         droplets.X[k] = droplets.X[j] = γ *droplets.X[j] + droplets.X[k]
+        droplets.dry_r3[k] = droplets.dry_r3[j] = γ * droplets.dry_r3[j] + droplets.dry_r3[k]
 
         if droplets.ξ[j] == 0
             coag_data.lowest_zero[] = true
