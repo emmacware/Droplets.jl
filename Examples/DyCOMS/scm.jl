@@ -1,5 +1,3 @@
-# using Pkg
-# Pkg.activate("./Examples/")
 using Revise
 using Droplets
 # using DifferentialEquations
@@ -10,9 +8,9 @@ using Plots
 using ComponentArrays
 using JLD2
 # using OrdinaryDiffEqBDF
+include("radiation_call.jl")
 include("initial_state_functions.jl")
 include("forward_solve.jl")
-include("radiation_call.jl")
 FT = Float64
 
 
@@ -26,7 +24,7 @@ nz = Int(Z_max/dz)
 dt = 1.0 #s
 Ns_per_grid =64
 seed = 30
-t_max = 3600*6 #s
+t_max = 1200 #s
 t_output = 60.0*5 #s
 
 
@@ -72,7 +70,7 @@ diagnosticsettings = diagnostic_settings()
 
 
 #Read Radiation Files 
-lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
+# lookup_lw, lookup_lw_cld, lookup_sw, lookup_sw_cld, idx_gases = read_radiation_tables()
 
 # Create superdroplets
 droplets = init_droplets_dycoms_scm(initial_aerosol_dist,coagsettings, spatialsettings)
@@ -87,7 +85,7 @@ grid.states.θ .+= rand(Uniform(-0.1,0.1), length(grid.states.θ))
 coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)
 # condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
 conddata = condensation_data(FT,nz)
-raddata = radiation_data(FT,nz,16,length(droplets.X))
+raddata = radiation_data(FT,length(droplets.X),grid,constants)
 mpdata_tmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
 Xinit= droplets.X .+ 0
 
@@ -133,7 +131,7 @@ plot_env_profiles(grid)
 plot_output_timeseries(grid)
 
 # @save "test_run3.jld2" CWC RWC AWC
-# savefig("scm_profiles_10min.png")
+# savefig("scm_profiles_6hrs.png")
 
 # scatter(Xinit, droplets.X, label="Final Volume")
 

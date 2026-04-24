@@ -1,5 +1,5 @@
 export scm_states, scm_wind, scm_diagnostics, scm_eulerian_arrays, create_scm_grids
-export scm_outputs, condensation_data, radiation_data
+export scm_outputs, condensation_data #, radiation_data
 
 struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     nz::Int
@@ -144,19 +144,6 @@ function condensation_data(::Type{FT},num_levels::Int)::condensation_data{FT} wh
     condensation_rad_net = zeros(FT, num_levels)
     condensation_rad_abs = zeros(FT, num_levels)
     return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs)
-end
-
-struct radiation_data{FT<:AbstractFloat}
-    flux_net_droplet::Matrix{FT}
-    cloud_heating_delta::Vector{FT}
-    cond_rad_term::Vector{FT}
-end
-
-function radiation_data(::Type{FT},nlay::Int,n_bnd::Int,nsd::Int)::radiation_data{FT} where FT<:AbstractFloat
-    flux_net_droplet = zeros(FT, nlay, n_bnd)
-    cloud_heating_delta = zeros(FT, nlay)
-    cond_rad_term = zeros(FT, nsd)
-    return radiation_data{FT}(flux_net_droplet, cloud_heating_delta,cond_rad_term)
 end
 
 
