@@ -96,6 +96,7 @@ struct radiation_clima_data_helper{FT<:AbstractFloat}
         swbcs = (cos_zenith=[FT(-1.0)], toa_flux=[FT(lookup_sw.solar_src_tot)], sfc_alb_direct=[FT(0.06)], inc_flux_diffuse=nothing, sfc_alb_diffuse=[FT(0.06)])
         slv_sw = TwoStreamSWRTE(grid_params; swbcs...)
         
+        # sfc_emis = fill(FT(0.98), 1)
         sfc_emis = fill(FT(0.98), 1)
         inc_flux = nothing
         slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
@@ -141,7 +142,8 @@ struct radiation_data{FT<:AbstractFloat}
         θ, qv, P, P_faces = grid.states.θ, grid.states.qv, grid.states.P,grid.states.P_faces
         grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
         T = grid.states.T_tmp
-        T1 = 2*T[1] - T[2]
+        Tsfc = 292.0
+        T1 = 0.5(T[1]+Tsfc)#2*T[1] - T[2] 
         P_extra = range(P_faces[end], 30000, 21)
         T_extra = T_from_theta.(θ[end],P_extra, constants) 
         layerdata[2,:] = [P; P_extra[2:2:end-1]]
@@ -168,7 +170,7 @@ struct radiation_data{FT<:AbstractFloat}
         cloud_state = CloudState(zeros(laydim...),zeros(laydim...),zeros(laydim...),zeros(laydim...),
                 zeros(laydim...),falses(nlay,ncol),falses(nlay,ncol),MaxRandomOverlap(),ice_rgh)
 
-        as =AtmosphericState(CArad.lon, CArad.lat, layerdata, p_lev, t_lev, T1, vmr, cloud_state, nothing)        
+        as =AtmosphericState(CArad.lon, CArad.lat, layerdata, p_lev, t_lev, Tsfc, vmr, cloud_state, nothing)        
         
         #output
         cloud_heating_delta = zeros(FT, Nz)
@@ -184,16 +186,20 @@ struct radiation_data{FT<:AbstractFloat}
     end 
 end
 
-function fill_full_atmosphere(grid,as,constants,CArad)
+Base.broadcastable(x::radiation_data) = Ref(x)
+Base.broadcastable(x::radiation_clima_data_helper)= Ref(x)
+
+function fill_full_atmosphere(grid::scm_eulerian_arrays,as::AtmosphericState,constants::Constants,CArad::radiation_clima_data_helper)::Nothing
     Nz = grid.nz
     grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
     T = grid.states.T_tmp
-    T1 = T[1]*2-T[1]
-    t_lay = @view as.layerdata[3, 1:Nz, 1]
-    t_lay[1:Nz, 1] .= T
-    as.t_lev[1:Nz, 1] .= [T1; (T[1:end-1] .+ T[2:end])./2] #could find this from half thetas and P_faces
+    T1 = 0.5(T[1]+292.0)# 2*T[1] - T[2]
+    t_lay = @view as.layerdata[3, :, 1]
+    t_lay[1:Nz] .= T
+    as.t_lev[1, 1] = T1
+    as.t_lev[2:Nz, 1] .= (@view(T[1:end-1]) .+ @view(T[2:end])) ./ 2
     # as.t_sfc         .= T1
-    as.vmr.vmr[CArad.idx_h2o, 1:Nz, 1] .= grid.states.qv * constants.ϵ
+    as.vmr.vmr[CArad.idx_h2o, 1:Nz, 1] .= grid.states.qv .* constants.ϵ
 
 return nothing
 end
@@ -202,6 +208,8 @@ function fill_liquid_water_diagnostics(grid, diagnosticsettings,CArad,as)
     Nz = grid.nz
     radliq_lwr = CArad.lookup_lw_cld.bounds[1]
     radliq_upr = CArad.lookup_lw_cld.bounds[2]
+    as.cloud_state.mask_lw .= false
+    as.cloud_state.cld_frac .= 0.0
 
     as.cloud_state.cld_path_liq[1:Nz,1] .= grid.diagnostics.cloud_LWC * grid.dz * 1000
     as.cloud_state.cld_r_eff_liq[1:Nz,1] .= grid.diagnostics.cloud_effective_radius * 1.0e6
@@ -250,9 +258,9 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
 
     #βe = zeros(FT,nlev,256)
     solve_lw!(CArad.slv_lw, raddata.flux_up_arr, raddata.flux_dn_arr, as, CArad.lookup_lw, CArad.lookup_lw_cld, nothing, raddata.metric_scaling)
-    solve_sw!(CArad.slv_sw, as, CArad.lookup_sw, CArad.lookup_sw_cld, nothing,raddata.metric_scaling)
+    # solve_sw!(CArad.slv_sw, as, CArad.lookup_sw, CArad.lookup_sw_cld, nothing,raddata.metric_scaling)
 
-    raddata.flux_net .= CArad.slv_lw.flux.flux_net .+ CArad.slv_sw.flux.flux_net
+    raddata.flux_net .= CArad.slv_lw.flux.flux_net #.+ CArad.slv_sw.flux.flux_net
     cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
     grav_ = FT(RRTMGP.Parameters.grav(param_set))
 
@@ -266,7 +274,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     
     ###Add in other updates
     
-    # flux_net_droplet = zeros(FT,nlay,n_bnd)
+    raddata.flux_net_droplet .= 0#zeros(FT,nlay,n_bnd)
     for ibnd in 1:n_bnd
         
         totplnk = view(CArad.lookup_lw.planck.tot_planck, :, ibnd)
@@ -278,7 +286,8 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
                 if as.cloud_state.mask_lw[glay,1]
                     bb_flux = pi * Optics.interp1d_equispaced(t_lay[glay,1], t_planck, totplnk) # t_lay from the timestep before update
                    
-                    raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
+                    # raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
+                    raddata.flux_net_droplet[glay,ibnd] = 4* bb_flux - (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
                     
                 end
             end

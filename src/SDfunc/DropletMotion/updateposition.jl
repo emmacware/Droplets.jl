@@ -11,9 +11,22 @@ export update_position!, update_droplet_positions!
 # limitvface(a, N_y) = a > N_y +1 ? N_y +1 : a < 1 ? 1 : a
 
 
-function update_droplet_positions!(droplets::droplet_attributes_1d, w_function, Δt::FT,spatialsettings::spatial_settings_1d) where FT<:AbstractFloat
+function update_droplet_positions!(droplets::droplet_attributes_1d, w_function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
     # map(i -> update_each_droplet!(i, droplets, w_function, Δt, spatialsettings), 1:length(droplets.X))
-    droplets.z_loc .+=  w_function.(droplets.z_loc).* Δt - terminal_v.(volume_to_radius.(droplets.X)) .* Δt
+    droplets.z_loc .+=  w_function.(droplets.z_loc).* Δt .+ droplets.w_prime .* Δt
+    # droplets.z_loc .+= droplets.w_prime .* Δt
+    if scmsettings.settling && i*Δt > scmsettings.spinup_time
+        droplets.z_loc .-= terminal_v.(volume_to_radius.(droplets.X)) .* Δt
+    end
+    # Reflective top boundary: prevents droplets from escaping above Z_max and losing
+    # w_prime updates (which only run for droplets inside the domain grid_range).
+    # Z_max = spatialsettings.Z_max
+    # for k in eachindex(droplets.z_loc)
+    #     if droplets.z_loc[k] > Z_max
+    #         droplets.z_loc[k] = 2*Z_max - droplets.z_loc[k]
+    #         droplets.w_prime[k] = -droplets.w_prime[k]
+    #     end
+    # end
     droplets.cell_id .= Int.(floor.(droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1)
     return nothing
 end

@@ -26,26 +26,26 @@ A struct representing constants used in the Droplets package.
 
 """
 Base.@kwdef struct Constants{FT<:AbstractFloat}
-    λ = FT(1.5625)        # 
-    κ = FT(1.5625)         # 
-    k = FT(0.024)         # from clima K_therm
-    μ = FT(1.6e-5)         # from clima ν_air
-    Dv = FT(2.26e-5)        # from clima D_vapor water vapor in air m2/s???
-    ρl = FT(1000.0)        # 
-    Rd = FT(287.0)        # 
-    Rv = FT(461.0)        # 
-    gconst = FT(9.8)    # gravitational constant, m/s2
-    L = FT(22.6e5)         # Latent Heat of Vaporization J/kg
-    Cp_water = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
-    Cp_vapor = FT(1859)     # ClimaParams "isobaric_specific_heat_vapor"
-    Cp_air = FT(1005)
-    σSB = FT(5.670374419e-8) # Stefan-Boltzmann constant W⋅m−2⋅K−4
-    T0 = FT(273.15)       # reference temperature K
-    P0 = FT(100000.0)     # reference pressure Pa for potential temperature
-    P_SLP = FT(101325.0)     # standard sea level pressure Pa
+    λ::FT = FT(1.5625)        # 
+    κ::FT = FT(1.5625)         # 
+    k::FT = FT(0.024)         # from clima K_therm
+    μ::FT = FT(1.6e-5)         # from clima ν_air
+    Dv::FT = FT(2.26e-5)        # from clima D_vapor water vapor in air m2/s???
+    ρl::FT = FT(1000.0)        # 
+    Rd::FT = FT(287.0)        # 
+    Rv::FT = FT(461.0)        # 
+    gconst::FT = FT(9.8)    # gravitational constant, m/s2
+    L::FT = FT(22.6e5)         # Latent Heat of Vaporization J/kg
+    Cp_water::FT = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
+    Cp_vapor::FT = FT(1859)     # ClimaParams "isobaric_specific_heat_vapor"
+    Cp_air::FT = FT(1005)
+    σSB::FT = FT(5.670374419e-8) # Stefan-Boltzmann constant W⋅m−2⋅K−4
+    T0::FT = FT(273.15)       # reference temperature K
+    P0::FT = FT(100000.0)     # reference pressure Pa for potential temperature
+    P_SLP::FT = FT(101325.0)     # standard sea level pressure Pa
     # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
-    ϵ = FT(1.6080793637401138)           # molar mass ratio air and vapor
-    Ω = FT(7.2921150e-5)     # Earth's rotation rate in radians per second
+    ϵ::FT = FT(1.6080793637401138)           # molar mass ratio air and vapor
+    Ω::FT = FT(7.2921150e-5)     # Earth's rotation rate in radians per second
 end
 
 const constants = Constants{Float64}()

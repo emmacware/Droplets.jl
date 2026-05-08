@@ -35,12 +35,22 @@ Base.@kwdef struct diagnostic_settings{FT<:AbstractFloat}
 end
 
 Base.@kwdef struct scm_settings{FT<:AbstractFloat}
-    #this stuff probably isnt that useful yet but good to have the struct for now
-    init_random_seed::Int = Int(30) 
-    coag_threading =  Serial()#Parallel(),use Julia NThreads for coalescence
-    scheme = none() #Adaptive,Small_Alpha
+    init_random_seed::Int = Int(30)
+    coag_threading =  Serial()
+    scheme = none()
     Δt::FT = FT(1.0)
     surface_latent_heat_flux::FT = FT(93.0) # W/m^2
     surface_sensible_heat_flux::FT = FT(16.0) # W/m^2
-
+    dt_cond::FT = FT(0.1)
+    dt_coag::FT = FT(0.1)
+    spinup_time::FT = FT(3600.0)
+    # Process on/off switches
+    turbulence_on::Bool = true
+    condensation_on::Bool = true
+    radiation_on::Bool = true
+    coalescence_on::Bool = true
+    settling::Bool = true
+    # Turbulence diffusion options
+    rho_weighted_diffusion::Bool = false          # use ρ-weighted diffuse_ρ_fields!; false = diffuse_fields!
+    turbulent_droplet_diffusion_on::Bool = true   # run OU-process droplet w' kick
 end

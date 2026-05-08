@@ -24,7 +24,7 @@ function dP_dz(P_z, ode_settings, z)
 end
 
 
-function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings)
+function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, geostrophic_v, prescribed_w,droplets,spatialsettings,condensationsettings,constants)
     grid = create_scm_grids(nz, dz,droplets,spatial = spatialsettings,output=nothing)
 
     p = (constants, θl, qt)
@@ -45,6 +45,23 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, g
     grid.wind.u .= geostrophic_u.(grid.centers_z)
     grid.wind.v .= geostrophic_v.(grid.centers_z)
     grid.wind.w .= prescribed_w.(grid.faces_z)
+
+        #set to eq radius
+    for k in range(1,nz)
+        drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
+
+        T = T_from_theta(grid.states.θ[k], grid.states.P[k], constants)
+        qv_k = grid.states.qv[k]
+        P_k = grid.states.P[k]
+        S_env = sat(qv_k,P_k)/esat(T)
+        if S_env > 0.95
+            S_env = 0.95
+        end
+        # println(S_env)
+        find_equilibrium_radius.(droplets,drop_idx, condensationsettings.kappa, T, S_env,constants)
+        
+    end
+    sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
     return grid
 end
 
@@ -78,9 +95,9 @@ function init_droplets_dycoms_scm(dist,settings::coag_settings{FT},
 
     sort!(dropidx, by = i -> cell_id[i])
     grid_range = [findfirst(i -> cell_id[i] == g, dropidx) : findlast(i -> cell_id[i] == g, dropidx) for g in 1:spatial.Nz]
+    w_prime = zeros(FT, Ns) 
 
-
-    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id,grid_range, dropidx)
+    droplets = droplet_attributes_1d{FT}(ξstart, volumes,dry_r3,z_loc, cell_id,w_prime,grid_range, dropidx)
     return droplets
 end
 
@@ -105,7 +122,8 @@ function plot_env_profiles(grid)
     
     p7 = plot(grid.states.e,grid.centers_z, ylabel="Height (m)", xlabel="Turbulent Kinetic Energy (J/kg)", title="TKE", legend=false)
 
-    plot(p1, p2, p3,p4,p5,p6,p7, layout=(4,2), size=(800,900))
+    envplot = plot(p1, p2, p3,p4,p5,p6,p7, layout=(4,2), size=(800,900))
+    return envplot
 end
 
 function plot_output_timeseries(grid)
@@ -123,14 +141,44 @@ function plot_output_timeseries(grid)
     p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
     LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
     p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
-    p5 = plot(time, grid.output.surface_precipitation *3600, xlabel="Time (h)", ylabel="Surface Precipitation (mm/hr)", title="Surface Precipitation Timeseries", legend=false)
-    p6 = plot(grid.output.cloud_LWC[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/m3)", title="Cloud LWC", legend=false)
+    p5 = plot(time, grid.output.surface_precipitation *3600, xlabel="Time (h)", ylabel="pr (mm/hr)", title="Surface Precipitation", legend=false)
+    # p6 = plot(grid.output.cloud_LWC[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/m3)", title="Cloud LWC", legend=false)
+    p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="ql (g/kg)", title="Cloud LWC", legend=false)
     # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
     
     θl = θl_θ.(grid.output.θ[:,1:t_skips:end], grid.output.ql[:,1:t_skips:end], constants)
     p7 = plot(θl, z_centers, ylabel="Height (m)", xlabel="Liquid Water Potential Temperature", title="θl", legend=false)
     p8 = plot(grid.output.ql[:,1:t_skips:end]*1000 .+ grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="q tot(g/kg)", title="qtot", legend=false)
-    plot(p1, p2,p7,p8, p3, p4,p5,p6, layout=(4,2), size=(600,900))
+    p9 = plot(grid.output.e[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Turbulent Kinetic Energy (J/kg)", title="TKE", legend=false)
+
+    #p10 is inversion height and cloud base height timeseries. these need to be calculated from the profiles
+    #inversion is where qt = 8 g/kg and cloud base is where cloud LWC > 0.01 g/m3
+    inv_height = zeros(length(time))
+    cloud_base_height = zeros(length(time))
+    for i in 1:length(time)
+        qt_profile = grid.output.ql[:,i] .+ grid.output.qv[:,i]
+        inv_idx = findfirst(qt_profile .< 0.008)
+        inv_height[i] = z_centers[inv_idx]
+        cloud_lwc_profile = grid.output.cloud_LWC[:,i]
+        cloud_base_idx = findfirst(cloud_lwc_profile[5:end] .> 0.1/1000)
+        cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx+4]
+    end
+    p10 = plot(time, inv_height, xlabel="Time (h)", ylabel="Inversion Height (m)", label="z_inv")
+    p10 = plot!(time, cloud_base_height, xlabel="Time (h)", ylabel="Height (m)", label="z_cb")
+    p11 = plot(grid.output.condensation_rad_abs[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Condensation Rad Abs (W/m3)", title="Condensation Rad Abs", legend=false)
+    condensation_time_series = sum(grid.output.condensation_src, dims=1)'
+    condensation_time_series_rad_net = sum(grid.output.condensation_rad_net, dims=1)'
+    condensation_time_series_rad_abs = sum(grid.output.condensation_rad_abs, dims=1)'
+    if maximum(time) >1
+        spinuptimeidx = findfirst(time .> 1)
+        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Mass Source (kg/m3/hr)", title="Condensation Mass Source", label="Mass")
+        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_net[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Rad Net (W/m3)", title="Condensation Mass Source", label="Rad Net")
+        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_abs[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Rad Abs (W/m3)", title="Condensation Mass Source", label="Rad Abs")
+    else
+        p12 = plot(time,condensation_time_series*3600, xlabel="Time (h)", ylabel="Condensation Mass Source (kg/m3/hr)", title="Condensation Mass Source", label="Mass")
+    end
+    tplot = plot(p1, p2,p7,p8, p3, p4,p5,p6,p9,p10,p11,p12, layout=(4,3), size=(900,900))
+    return tplot
 end
 # function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
 #     nz = grid.nz

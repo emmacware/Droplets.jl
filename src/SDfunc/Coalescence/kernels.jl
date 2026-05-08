@@ -31,7 +31,9 @@ function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
     d_cm = 2 * r * 100  # radius in meters → diameter in cm
     if d_cm < 0.0078
         # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
-        return 1.19e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
+        return 1.2e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
+    elseif d_cm > 0.58
+        return FT(_tv_interp(0.58) / 100)  # Gunn and Kinzer, need?
     else
         return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
     end
@@ -60,6 +62,19 @@ function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
     return Y
 end
 
+
+# function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
+#     #Parameterization from Simmel et al., 2002
+#     Rj_cm = max(R1,R2)*1e4
+#     Rk_cm = min(R1,R2)*1e4
+#     Ecoal = 1
+#     if Rk_cm < 50e-4
+#         Ecol = max(4.5*1e4*Rk_cm^2(1-3e-4/Rj_cm),1e-3)
+#     else
+#         Ecol = 1
+#     end
+#     return Ecol
+# end
 #---------------------------------------------------------
 # Coalescence Kernels
 #---------------------------------------------------------

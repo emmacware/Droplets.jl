@@ -10,25 +10,25 @@ export dM_dt
 export drkappakohler
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
 export drrad_term, dXkappakohler_newtonraphson
-
+export calc_cond_rad_term
 ######################################################################
 # 
 
 """
-    FK(T)
-    FD(T)
+    FK(T, constants)
+    FD(T, constants)
     Functions in the Denominator of the Köhler Equation
 
 Uses the constants structs defined in Droplets
 # Arguments
 - `T`: Temperature in K
 """
-function FK(T) 
+function FK(T,constants) 
     Fk = (constants.L ./(constants.Rv.*T) .-1).*(constants.L*constants.ρl)./(constants.k .*T) 
     return Fk
 end
 
-function FD(T)
+function FD(T,constants)
     Fd = constants.ρl*constants.Rv .*(T)./(constants.Dv .* esat(T))
     return Fd
 end
@@ -97,24 +97,24 @@ RHS of the Köhler equation.
 # Returns
 - `dr`: Change in droplet radius over the timestep (m)
 """
-function drkohler(R, M, m, T, qv, P, timestep)
+function drkohler(R, M, m, T, qv, P,constants, timestep)
     S = sat.(qv, P) ./ esat(T)
-    denom = (FK(T) + FD(T))
+    denom = (FK(T, constants) + FD(T, constants))
     dr = (S - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkohler(R, M, m, T, Senv, timestep)
-    denom = (FK(T) + FD(T))
+function drkohler(R, M, m, T, Senv,constants, timestep)
+    denom = (FK(T, constants) + FD(T, constants))
     dr = (Senv - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv,timestep;rad_term=0.0)
+function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
-    fk = FK(T)
-    denom = (fk + FD(T))
+    fk = FK(T, constants)
+    denom = (fk + FD(T, constants))
     # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
     
@@ -128,14 +128,14 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,timestep;rad_term=0.0)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function dXkappakohler_newtonraphson(R, dry_r3, kappa, T, Senv, timestep, iters)
+function dXkappakohler_newtonraphson(R, dry_r3, kappa, T, Senv, constants,timestep, iters)
     # Fully implicit solve for R²_new via Newton-Raphson.
     # Find u = R²_new such that g(u) = u - R²_old - dt·F(u) = 0,
     # where F(u) = dR²/dt = 2(S-1 - A/√u + B/u^{3/2}) / denom.
     # g'(u) = 1 - dt·F'(u),  F'(u) = (A/r³ - 3B/r⁵) / denom  (r = √u)
     A = akk(T)
     b = kappa * dry_r3
-    denom = FK(T) + FD(T)
+    denom = FK(T, constants) + FD(T, constants)
     R2_old = R^2
 
     # Initial guess: explicit Euler step in R²
@@ -146,23 +146,82 @@ function dXkappakohler_newtonraphson(R, dry_r3, kappa, T, Senv, timestep, iters)
         r  = sqrt(R2)
         F  = 2 * (Senv - 1.0 - A/r + b/r^3) / denom
         g  = R2 - R2_old - timestep * F
-        gp = 1.0 - timestep * (A/r^3 - 3*b/r^5) / denom
+        R2r = R2 * r
+        gp = 1.0 - timestep * (A/R2r - 3*b/(R2*R2r)) / denom
         δ  = g / gp
         R2 -= δ
         R2  = max(R2, R2_old * 1e-6)   # keep positive
         abs(δ) < 1e-18 * R2 && break
     end
 
-    return radius_to_volume(sqrt(R2)) - radius_to_volume(R)
+    return max(radius_to_volume(sqrt(R2)), 4/3*pi *dry_r3)# - radius_to_volume(R)
 end
 
-function drrad_term(R, T, rad_term, timestep)
-    fk = FK(T)
-    denom = (fk + FD(T))
+function drrad_term(R, T, rad_term,constants, timestep)
+    fk = FK(T, constants)
+    denom = (fk + FD(T, constants))
     dr = rad_term * fk / (constants.L*constants.ρl * denom)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
+function calc_cond_rad_term(R,z,constants,raddata,absliq_r_interp)
+    if R < 2.5e-6 || R > 4e-5
+        return 0.0
+    end
+    condradterm = 0.0
+    n_bnd = raddata.CArad.nband_lw
+    for ibnd in 1:n_bnd
+        abs_drop = absliq_r_interp[ibnd](R*1.0e6)
+        Qa = abs_drop * radius_to_volume(R) * constants.ρl * kg_to_g / (pi *R^2) #grams
+        condradterm += Qa * raddata.flux_net_droplet[z,ibnd]
+    end
+    return condradterm
+end
+
+function dXkappakohler_newtonraphson(droplets,i, kappa, T, Senv, constants,
+    raddata,   # r -> dR/dt contribution from radiation
+    absliq_r_interp,
+    timestep, iters)
+R = volume_to_radius(droplets.X[i])
+dry_r3 = droplets.dry_r3[i]
+z = droplets.cell_id[i]
+A = akk(T)
+b = kappa * dry_r3
+fk = FK(T, constants)
+denom = fk + FD(T, constants)
+R2_old = R^2
+
+r0 = R
+# F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*drrad_term(r0,T,radterm,constants,timestep)/denom
+F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*calc_cond_rad_term(r0,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
+R2 = max(R2_old + F0*timestep, R2_old*1e-4)
+
+for _ in 1:iters
+r  = sqrt(R2)
+F_cond = 2*(Senv - 1.0 - A/r + b/r^3) / denom
+F_rad  = 2*r * calc_cond_rad_term(r,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)      # re-evaluated at current r
+g  = R2 - R2_old - timestep*(F_cond + F_rad)
+gp = 1.0 - timestep*(A/(R2*r) - 3b/(R2^2*r)) / denom  # Jacobian: Köhler only, rad treated explicit
+δ  = g / gp
+R2 -= δ
+R2  = max(R2, R2_old*1e-6)
+abs(δ) < 1e-18*R2 && break
+end
+
+r_new   = sqrt(R2)
+F_cond  = 2*(Senv - 1.0 - A/r_new + b/r_new^3) / denom
+F_rad   = 2*r_new * calc_cond_rad_term(r_new,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
+f_total = F_cond + F_rad
+
+X_new    = max(radius_to_volume(r_new), 4/3*π*dry_r3)
+dX_total = X_new - radius_to_volume(R)
+dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
+dX_rad   = dX_total - dX_cond
+
+droplets.X[i] = X_new
+raddata.cond_rad_term[i] = dX_rad
+return #dX_cond, dX_rad
+end
 
 
 """
@@ -181,9 +240,9 @@ Compute the rate of change of droplet radius for activated droplets, neglecting
 dr: rate of change of droplet radius.
 
 """
-function drkohler_activated(R,T,Senv,timestep)
+function drkohler_activated(R,T,Senv,constants,timestep)
     # S = Senv/esat(T)
-    denom = (FK(T)+FD(T))
+    denom = (FK(T, constants)+FD(T, constants))
     dr = (Senv-1) ./(denom.*R)
     return R + dr*timestep > 0 ? dr : -R/timestep
 end
@@ -206,7 +265,7 @@ Calculate the change in droplet volume due to condensation using the Kohler equa
 - `dX`: Change in droplet volume
 
 """
-function dXkohler_function_of_radius(R, M, m, T, qv, P, timestep)
+function dXkohler_function_of_radius(R, M, m, T, qv, P,constants, timestep)
     dX = 4 * π * R^2 * drkohler(R, M, m, T, qv, P)
     return dX
 end
@@ -228,8 +287,8 @@ Calculate the change in droplet volume due to condensation using the Kohler equa
 - `dX`: Change in droplet mass
 
 """
-function dXkohler_function_of_radius(R, M, m, T, Senv, timestep)
-    dX = 4 * π * R^2 * drkohler(R, M, m, T, Senv, timestep)
+function dXkohler_function_of_radius(R, M, m, T, Senv,constants, timestep)
+    dX = 4 * π * R^2 * drkohler(R, M, m, T, Senv,constants, timestep)
     return dX
 end
 
@@ -249,8 +308,8 @@ Calculate the change in droplet volume due to condensation using the Kohler equa
 - `dX`: Change in droplet mass
 
 """
-function dXkohler_function_of_radius_activated(R, T, Senv, timestep)
-    dX = 4 * π * R^2 * drkohler_activated(R, T, Senv, timestep)
+function dXkohler_function_of_radius_activated(R, T, Senv,constants, timestep)
+    dX = 4 * π * R^2 * drkohler_activated(R, T, Senv,constants, timestep)
     return dX
 end
 
@@ -265,18 +324,18 @@ const β_diff = 0.04
 const α_diff = 0.7
 D(T,p) = 2.11e−5 * (T/constants.T0)*1.94*(constants.P0/p)
 
-function F_α(R,T,ρ_air,Re,K_th)
+function F_α(R,T,ρ_air,Re,K_th,constants)
     l_q = (2π/(constants.Rd*T))^0.5*K(T)*f_q(Re,ρ_air,T)/(ρ_air*constants.Cp_air*2*α_diff*(2-α_diff)^(-1))
     # l_q = K_th * f_q(Re,ρ_air,T) / (ρ_air*constants.Cp_air*1/4 * α_diff* (8*(constants.Rd*T/pi))^0.5)
     return R/(R+ l_q)
 end
 
-function F_β(R,T,ρ_air,P,Dv,Re)
+function F_β(R,T,ρ_air,P,Dv,Re,constants)
     l_m =  (2π/(constants.Rv*T))^0.5 * Dv * f_m(Re,ρ_air,T,P)/(2*β(T)*(2-β(T))^(-1))
     return R/(R + l_m)
 end
 
-function fvmol(Re,ScPr)
+function fvmol(Re,ScPr,constants)
     re_half_scpr_third = Re^0.5 * ScPr^(1/3)
     if re_half_scpr_third < 1.4
         # fvmol = 1+0.108*(re_half_scpr_third^2)
@@ -289,21 +348,21 @@ function fvmol(Re,ScPr)
 end
 
 
-function Sc(ρ_air,T,P)
-    return η_air(T,ρ_air)/(ρ_air*D(T,P))
+function Sc(ρ_air,T,P,constants)
+    return η_air(T,ρ_air,constants)/(ρ_air*D(T,P))
 end
 
-function Pr(ρ_air,T)
-    return η_air(T,ρ_air)*constants.Cp_air/K(T)
+function Pr(ρ_air,T,constants)
+    return η_air(T,ρ_air,constants)*constants.Cp_air/K(T)
 end
-f_m(Re_,ρ_air,T,P) = fvmol(Re_,Sc(ρ_air,T,P))
-f_q(Re_,ρ_air,T) = fvmol(Re_,Pr(ρ_air,T))
+f_m(Re_,ρ_air,T,P,constants) = fvmol(Re_,Sc(ρ_air,T,P,constants))
+f_q(Re_,ρ_air,T,constants) = fvmol(Re_,Pr(ρ_air,T,constants))
 
-function Reynoldsnumber(R,ρ_air,T)
-    return 2*R*ρ_air*terminal_v(R)/η_air(T,ρ_air)
+function Reynoldsnumber(R,ρ_air,T,constants)
+    return 2*R*ρ_air*terminal_v(R)/η_air(T,ρ_air,constants)
 end
 
-function η_air(T,ρ_air) #kinematic viscosity of air
+function η_air(T,ρ_air,constants) #kinematic viscosity of air
     μ = constants.μ*(T/296.16)^1.5 * (T + 120)/(T+296.16) #Hall and Pruppracher 1976 term index
     return μ
 end
@@ -329,7 +388,7 @@ end
 
 
 
-function dM_dt(R,T,Senv,p_air,ρ_air,η,ε_r,Fs,ε_0) #Zeng et al 2018
+function dM_dt(R,T,Senv,p_air,ρ_air,η,ε_r,Fs,ε_0,constants) #Zeng et al 2018
     Dv = D(T,p_air)
     Re_ = Reynoldsnumber(R,ρ_air,T)
     K_th = K(T)
@@ -371,7 +430,7 @@ using droplet solute information.
 - `dql`: Change in liquid water mass
 
 """
-function dq_liq_cond(R, M, m, T, Senv, timestep, ρ_air)
+function dq_liq_cond(R, M, m, T, Senv,constants, timestep, ρ_air)
     dX = dXkohler_function_of_radius(R, M, m, T, Senv, timestep)
     dql = sum(dX .* ξ .* constants.ρl / ρ_air)
     return dql
@@ -394,16 +453,16 @@ Calculate the change in liquid water mass due to condensation of activated dropl
 - `dql`: Change in liquid water mass
 
 """
-function dq_liq_cond_activated(R, T, Senv, timestep, ρ_air)
+function dq_liq_cond_activated(R, T, Senv,constants, timestep, ρ_air)
     dX = dXkohler_function_of_radius_activated(R, T, Senv, timestep)
     dql = sum(dX .* ξ .* constants.ρl / ρ_air)
     return dql
 end
 
-function dX_droplets!(X,dry_r3, kappa, qv, T, P, dt)
+function dX_droplets!(X,dry_r3, kappa, qv, T, P, constants,dt)
     # Calculate the change in droplet volume due to condensation
     R = volume_to_radius.(X)  # Convert volume to radius
-    dX = 4 * π * R^2 * drkappakohler(R,dry_r3,kappa,Senv,timestep)
+    dX = 4 * π * R^2 * drkappakohler(R,dry_r3,kappa,Senv,constants,timestep)
     return dX
 end
 
@@ -418,7 +477,7 @@ end
 
 
 
-function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env; max_iter=100, tol=1e-12)
+function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
     dry_r3 = droplets.dry_r3[drop_idx]
     dry_r = (dry_r3)^(1/3)
@@ -458,121 +517,37 @@ end
 
 
 
-function condensation_rhs!(du, u, p, t)
-    du .= 0#zero.(u)  # Initialize du to zero, preserving the structure and types of u
-    FT = eltype(u.lnR)
-    lnR = u.lnR
-    qvap_col = u.qvap
-    T_col = u.T
-    nz,drops,grid,constants,condsettings,spatialsettings = p
-    R = exp.(lnR)
-    T_v = T_virtual.(T_col, qvap_col)
-    Rd = constants.Rd
-    gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
-
-    for k in 1:nz
-        P::FT = grid.P[k]
-        T::FT  = T_col[k]
-        qv::FT = qvap_col[k]
-        Tv::FT = T_v[k]
-        ρ_air::FT = P / Rd / Tv
-        S_env::FT = sat(qv, P) / esat(T)
-        #find all indexes where drops.cell_id == k
-        R_idx = findall(drops.cell_id .== k)
-        if !isempty(R_idx)
-            dR = drkappakohler.(R[R_idx],drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
-            dX = 4 * π .* R[R_idx].^2 .* dR
-
-            dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
-            dT = - dqvap * constants.L / constants.Cp_air
-
-            du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
-            du.qvap[k] = FT(dqvap)
-            du.T[k] = FT(dT)
-        end
-    end
-end
-
-# function condensation_rhs_single_cell(du, u, p, t)
-#     du .= 0  # Initialize du to zero, preserving the structure and types of u
+# function condensation_rhs!(du, u, p, t)
+#     du .= 0#zero.(u)  # Initialize du to zero, preserving the structure and types of u
 #     FT = eltype(u.lnR)
-#     k,drops,grid,constants,condsettings,spatialsettings = p
 #     lnR = u.lnR
-#     qv = u.qvap[k]
-#     T = u.T[k]
-    
-    
-#     Tv = T_virtual.(T, qv)
+#     qvap_col = u.qvap
+#     T_col = u.T
+#     nz,drops,grid,constants,condsettings,spatialsettings = p
+#     R = exp.(lnR)
+#     T_v = T_virtual.(T_col, qvap_col)
 #     Rd = constants.Rd
 #     gridV = spatialsettings.z_grid_height * spatialsettings.area_per_grid
-#     P::FT = grid.P[k]
-#     R_idx = findall(drops.cell_id .== k)
-#     R = exp.(lnR[R_idx])
 
+#     for k in 1:nz
+#         P::FT = grid.P[k]
+#         T::FT  = T_col[k]
+#         qv::FT = qvap_col[k]
+#         Tv::FT = T_v[k]
+#         ρ_air::FT = P / Rd / Tv
+#         S_env::FT = sat(qv, P) / esat(T)
+#         #find all indexes where drops.cell_id == k
+#         R_idx = findall(drops.cell_id .== k)
+#         if !isempty(R_idx)
+#             dR = drkappakohler.(R[R_idx],drops.dry_r3[R_idx],condsettings.kappa,T,S_env,constants, t)
+#             dX = 4 * π .* R[R_idx].^2 .* dR
 
-#     ρ_air::FT = P / Rd / Tv
-#     S_env::FT = sat(qv, P) / esat(T)
+#             dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
+#             dT = - dqvap * constants.L / constants.Cp_air
 
-#     if !isempty(R_idx)
-#         dR = drkappakohler.(R,drops.dry_r3[R_idx],condsettings.kappa,T,S_env, t)
-#         dX = 4 * π .* R.^2 .* dR
-
-#         dqvap = - sum(dX .* drops.ξ[R_idx] .* constants.ρl / ρ_air) / gridV
-#         dT = - dqvap * constants.L / constants.Cp_air
-
-#         du.lnR[R_idx] .= FT.(dR ./ R)
-#         du.qvap[k] = FT(dqvap)
-#         du.T[k] = FT(dT)
+#             du.lnR[R_idx] .= FT.(dR ./ R[R_idx])
+#             du.qvap[k] = FT(dqvap)
+#             du.T[k] = FT(dT)
+#         end
 #     end
-
 # end
-# # end
-
-
-# function condensation_rhs_single_droplet(du, u, p, t)
-#     du .= 0  # Initialize du to zero, preserving the structure and types of u
-#     FT = eltype(u)
-#     k,drops,grid,constants,condsettings,spatialsettings = p
-#     # R = sqrt(u[1])
-#     R = exp(u[1])
-#     cell = drops.cell_id[k]
-#     # if cell < 1
-#     #     return FT(0)
-#     # end
-#     qv = grid.qv[cell]
-#     T = grid.T[cell]
-    
-#     Tv = T_virtual(T, qv)
-#     Rd = constants.Rd
-#     P = grid.P[cell]
-
-#     S_env = sat(qv, P) / esat(T)
-
-#     dR = drkappakohler(R,drops.dry_r3[k],condsettings.kappa,T,S_env, t)
-#     du[1] = dR / R
-#     return nothing
-# end
-# end
-
-function condensation_rhs_single_droplet(du, u, p, t)
-    du[1] = zero(eltype(u))  # Use zero() instead of 0
-    k, drops, grid, constants, condsettings, spatialsettings = p
-    
-    cell = drops.cell_id[k]
-    if cell < 1 || cell > length(grid.qv)
-        return nothing
-    end
-    
-    R = exp(u[1])  # Don't convert to FT
-    qv = grid.qv[cell]
-    T = grid.T[cell] 
-    P = grid.P[cell]
-    
-    S_env = sat(qv, P) / esat(T)
-
-    #Fix this if we go back to using the integrator
-    dR = 0#drkappakohler(R, drops.dry_r3[k], condsettings.kappa, T, S_env, t)
-    
-    du[1] = dR / R  # d(ln(R))/dt = dR/R, no type conversion
-    return nothing
-end

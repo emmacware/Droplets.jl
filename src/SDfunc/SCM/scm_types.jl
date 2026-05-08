@@ -137,13 +137,15 @@ struct condensation_data{FT<:AbstractFloat}
     condensation_src::Vector{FT}
     condensation_rad_net::Vector{FT}
     condensation_rad_abs::Vector{FT}
+    vol_change_helper::Vector{FT}
 end
 
-function condensation_data(::Type{FT},num_levels::Int)::condensation_data{FT} where FT<:AbstractFloat
+function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_data{FT} where FT<:AbstractFloat
     condensation_src = zeros(FT, num_levels)
     condensation_rad_net = zeros(FT, num_levels)
     condensation_rad_abs = zeros(FT, num_levels)
-    return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs)
+    vol_change_helper = zeros(FT, num_levels)
+    return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs,vol_change_helper)
 end
 
 
