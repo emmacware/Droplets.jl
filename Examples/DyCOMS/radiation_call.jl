@@ -201,35 +201,30 @@ function fill_full_atmosphere(grid::scm_eulerian_arrays,as::AtmosphericState,con
     # as.t_sfc         .= T1
     as.vmr.vmr[CArad.idx_h2o, 1:Nz, 1] .= grid.states.qv .* constants.ϵ
 
-return nothing
-end
-
-function fill_liquid_water_diagnostics(grid, diagnosticsettings,CArad,as) 
-    Nz = grid.nz
-    radliq_lwr = CArad.lookup_lw_cld.bounds[1]
-    radliq_upr = CArad.lookup_lw_cld.bounds[2]
-    as.cloud_state.mask_lw .= false
-    as.cloud_state.cld_frac .= 0.0
-
-    as.cloud_state.cld_path_liq[1:Nz,1] .= grid.diagnostics.cloud_LWC * grid.dz * 1000
-    as.cloud_state.cld_r_eff_liq[1:Nz,1] .= grid.diagnostics.cloud_effective_radius * 1.0e6
-    as.cloud_state.cld_r_eff_liq[as.cloud_state.cld_r_eff_liq .< radliq_lwr] .= radliq_lwr
-    as.cloud_state.cld_r_eff_liq[as.cloud_state.cld_r_eff_liq .> radliq_upr] .= radliq_upr
-    as.cloud_state.cld_frac[as.cloud_state.cld_path_liq.>0.0] .= 1.0
-    as.cloud_state.mask_lw[as.cloud_state.cld_frac.==1] .= true
-    as.cloud_state.mask_sw .= as.cloud_state.mask_lw
-
     return nothing
 end
 
-function radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)::Nothing
+function fill_liquid_water_diagnostics(grid::scm_eulerian_arrays{FT}, diagnosticsettings::diagnostic_settings{FT},CArad::radiation_clima_data_helper,as::AtmosphericState)::Nothing where FT<:AbstractFloat
+    Nz = grid.nz
+
+    as.cloud_state.cld_path_liq[1:Nz,1] .= grid.diagnostics.cloud_LWC .* grid.dz .* 1000
+    as.cloud_state.cld_r_eff_liq[1:Nz,1] .= grid.diagnostics.cloud_effective_radius .* 1.0e6
+    clamp!(as.cloud_state.cld_r_eff_liq, CArad.lookup_lw_cld.bounds[1], CArad.lookup_lw_cld.bounds[2])
+    
+    @. as.cloud_state.cld_frac = ifelse(as.cloud_state.cld_path_liq > 0.0, one(FT), zero(FT))
+    @. as.cloud_state.mask_lw = as.cloud_state.cld_frac == 1
+    as.cloud_state.mask_sw .= as.cloud_state.mask_lw
+    return nothing
+end
+
+function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
     
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
     #2. Or, do we want to specify the atmosphere above the model top just for radiation?
 
 
-    FT = eltype(raddata.flux_up_lw)
+    # FT = eltype(raddata.flux_up_lw)
     CArad = raddata.CArad
     context = CArad.context
     device = CArad.device
@@ -237,6 +232,7 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     param_set = CArad.paramset
     grid_params = CArad.grid_params
     as = raddata.atmospheric_state
+    nz = grid.nz
 
 
     #Profiles
@@ -269,31 +265,125 @@ function radiation_function!(grid,spatialsettings, diagnosticsettings, constants
     grid.states.T_tmp .+= dt .* @view raddata.hr_lay[1:nz,1] 
     raddata.cloud_heating_delta .+= dt .* @view raddata.hr_lay[1:nz,1]
 
-    grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
-    grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
-    
-    ###Add in other updates
-    
-    raddata.flux_net_droplet .= 0#zeros(FT,nlay,n_bnd)
-    for ibnd in 1:n_bnd
-        
-        totplnk = view(CArad.lookup_lw.planck.tot_planck, :, ibnd)
-        (; t_planck) = CArad.lookup_lw.planck
+    # grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
+    # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
+    theta_from_T!(grid.states.θ, grid.states.T_tmp, grid.states.P, constants)
+    ρ_ideal_gas!(grid.states.ρ, grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
 
-        
-        @inbounds begin
-            for glay in 1:grid.nz
-                if as.cloud_state.mask_lw[glay,1]
-                    bb_flux = pi * Optics.interp1d_equispaced(t_lay[glay,1], t_planck, totplnk) # t_lay from the timestep before update
-                   
-                    # raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
-                    raddata.flux_net_droplet[glay,ibnd] = 4* bb_flux - (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
-                    
-                end
-            end
+    
+    ##Add in other updates
+    t_planck  = CArad.lookup_lw.planck.t_planck
+    tot_planck = CArad.lookup_lw.planck.tot_planck
+    mask_lw   = as.cloud_state.mask_lw
+    
+    raddata.flux_net_droplet .= 0
+    @inbounds for ibnd in 1:n_bnd
+        totplnk = view(tot_planck, :, ibnd)
+        for glay in 1:grid.nz
+            mask_lw[glay, 1] || continue
+            bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
+            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])
         end
     end
 
 
     return nothing#flux_net_droplet
 end
+
+
+
+
+
+
+
+# function radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)::Nothing
+    
+
+#     FT = eltype(raddata.flux_up_lw)
+#     CArad = raddata.CArad
+#     context = CArad.context
+#     device = CArad.device
+#     DA = CArad.DA
+#     param_set = CArad.paramset
+#     grid_params = CArad.grid_params
+#     as = raddata.atmospheric_state
+#     ncol = CArad.ncol
+#     nlay = CArad.nlay
+#     n_bnd = CArad.nband_lw
+
+
+#     #Profiles
+#     fill_full_atmosphere(grid,as,constants,CArad)
+#     fill_liquid_water_diagnostics(grid, diagnosticsettings,CArad,as)
+
+#     nlay = CArad.nlay
+#     ncol = CArad.ncol
+#     n_bnd = CArad.nband_lw
+#     col_dry = reshape(view(as.layerdata, 1, :), nlay, ncol)
+#     p_lay = reshape(view(as.layerdata, 2, :), nlay, ncol)
+#     t_lay = reshape(view(as.layerdata, 3, :), nlay, ncol)
+#     rel_hum = reshape(view(as.layerdata, 4, :), nlay, ncol)
+#     vmr_h2o = reshape(view(as.vmr.vmr, CArad.idx_gases["h2o"], :, 1), nlay, ncol)
+
+#     compute_col_gas!(device, as.p_lev, col_dry, param_set, vmr_h2o, CArad.lat) # the example skips lat based gravity calculation
+#     compute_relative_humidity!(device, rel_hum, p_lay, t_lay, param_set, vmr_h2o) # compute relative humidity
+
+
+#     F0 = 70.0
+#     F1 = 22.0
+#     alpha = 1.0
+#     ρi = 1.12 * 1e-3
+#     kappa = 85.0
+#     D = 3.75*1e-6
+#     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
+#     zi = grid.centers_z[inv_idx]
+
+#     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, 1:grid.nz)
+#     raddata.flux_net .=0
+
+#     for k in 1:grid.nz
+#         z = grid.centers_z[k]
+#         raddata.flux_net[k,1] = F0 * exp(-kappa * sum(grid.states.ql_tmp[k:end].*grid.states.ρ[k:end])) +
+#                     F1 * exp(-kappa * sum(grid.states.ql_tmp[1:k].*grid.states.ρ[1:k]))
+#         if z > zi
+#             raddata.flux_net[k,1] += alpha * ρi * constants.Cp_air * D *
+#                     (0.25*(z-zi)^(4/3)+ zi*(z-zi)^(1/3))
+#         end
+#     end
+
+
+#     # raddata.flux_net .= CArad.slv_lw.flux.flux_net #.+ CArad.slv_sw.flux.flux_net
+#     cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
+#     grav_ = FT(RRTMGP.Parameters.grav(param_set))
+
+#     compute_gray_heating_rate!(device,raddata.hr_lay,as.p_lev,ncol,nlay,raddata.flux_net,cp_d_,grav_)
+
+#     grid.states.T_tmp .+= dt .* @view raddata.hr_lay[1:nz,1] 
+#     raddata.cloud_heating_delta .+= dt .* @view raddata.hr_lay[1:nz,1]
+
+#     grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
+#     grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
+    
+#     ###Add in other updates
+    
+#     raddata.flux_net_droplet .= 0#zeros(FT,nlay,n_bnd)
+#     for ibnd in 1:n_bnd
+        
+#         totplnk = view(CArad.lookup_lw.planck.tot_planck, :, ibnd)
+#         (; t_planck) = CArad.lookup_lw.planck
+
+        
+#         @inbounds begin
+#             for glay in 1:grid.nz
+#                 if as.cloud_state.mask_lw[glay,1]
+#                     bb_flux = pi * Optics.interp1d_equispaced(t_lay[glay,1], t_planck, totplnk) # t_lay from the timestep before update
+#                     raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
+                    
+#                 end
+#             end
+#         end
+#     end
+
+
+#     return nothing#flux_net_droplet
+# end

@@ -46,9 +46,13 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, geostrophic_u, g
     grid.wind.v .= geostrophic_v.(grid.centers_z)
     grid.wind.w .= prescribed_w.(grid.faces_z)
 
-        #set to eq radius
+        #set to eq radius, rescale multiplicities from STP to actual density
+    FT = eltype(grid.states.P)
+    ρ_STP = FT(101325 / (constants.Rd * 273.15))
     for k in range(1,nz)
         drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
+        ρ_ratio = grid.states.ρ[k] / ρ_STP
+        droplets.ξ[drop_idx] .= floor.(Int, droplets.ξ[drop_idx] .* ρ_ratio .+ 0.5)
 
         T = T_from_theta(grid.states.θ[k], grid.states.P[k], constants)
         qv_k = grid.states.qv[k]
@@ -141,7 +145,7 @@ function plot_output_timeseries(grid)
     p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
     LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
     p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
-    p5 = plot(time, grid.output.surface_precipitation *3600, xlabel="Time (h)", ylabel="pr (mm/hr)", title="Surface Precipitation", legend=false)
+    p5 = plot(time, grid.output.surface_precipitation *3600 * 24, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
     # p6 = plot(grid.output.cloud_LWC[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/m3)", title="Cloud LWC", legend=false)
     p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="ql (g/kg)", title="Cloud LWC", legend=false)
     # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)

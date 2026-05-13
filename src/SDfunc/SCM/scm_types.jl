@@ -1,5 +1,6 @@
 export scm_states, scm_wind, scm_diagnostics, scm_eulerian_arrays, create_scm_grids
 export scm_outputs, condensation_data #, radiation_data
+export turbulence_data
 
 struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     nz::Int
@@ -146,6 +147,33 @@ function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_da
     condensation_rad_abs = zeros(FT, num_levels)
     vol_change_helper = zeros(FT, num_levels)
     return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs,vol_change_helper)
+end
+
+struct turbulence_data{FT<:AbstractFloat} 
+    l::Vector{FT} # mixing length
+    SM::Vector{FT} # shear production
+    SH::Vector{FT} # buoyancy production
+    GM::Vector{FT} # shear diffusion
+    GH::Vector{FT} # buoyancy diffusion
+    K_h::Vector{FT} # diffusivity for scalars
+    K_m::Vector{FT} # diffusivity for momentum
+    K_e::Vector{FT} # diffusivity for TKE
+    du::Vector{FT} # 
+    dv::Vector{FT} #
+
+    function turbulence_data(::Type{FT}, num_levels::Int)::turbulence_data{FT} where FT<:AbstractFloat
+        l = zeros(FT, num_levels)
+        SM = zeros(FT, num_levels)
+        SH = zeros(FT, num_levels)
+        GM = zeros(FT, num_levels)
+        GH = zeros(FT, num_levels)
+        K_h = zeros(FT, num_levels)
+        K_m = zeros(FT, num_levels)
+        K_e = zeros(FT, num_levels)
+        du = zeros(FT, num_levels)
+        dv = zeros(FT, num_levels)
+        return new{FT}(l, SM, SH, GM, GH, K_h, K_m, K_e, du, dv)
+    end
 end
 
 

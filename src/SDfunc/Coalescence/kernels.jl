@@ -3,7 +3,7 @@
 #---------------------------------------------------------
 # KERNELS
 #---------------------------------------------------------
-export terminal_v,hydrodynamic,golovin
+export terminal_v,hydrodynamic,golovin,long1974, terminal_v_X
 
 # terminal velocity of droplets (this should move..)
 """
@@ -29,6 +29,18 @@ const _tv_interp = linear_interpolation(_tv_d_table, _tv_v_table, extrapolation_
 
 function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
     d_cm = 2 * r * 100  # radius in meters → diameter in cm
+    if d_cm < 0.0078
+        # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+        return 1.2e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
+    elseif d_cm > 0.58
+        return FT(_tv_interp(0.58) / 100)  # Gunn and Kinzer, need?
+    else
+        return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
+    end
+end
+
+function terminal_v_X(X::FT)::FT where FT<:AbstractFloat  # terminal velocity
+    d_cm = 2 * volume_to_radius(X) * 100  # radius in meters → diameter in cm
     if d_cm < 0.0078
         # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
         return 1.2e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
@@ -120,4 +132,27 @@ Taken from Golovin (1963), this kernel has an analytic solution for the Smulocho
 """
 @inline function golovin(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
     return settings.golovin_kernel_coeff *(droplets.X[j] + droplets.X[k])# Xsum
+end
+
+"""
+    long1974(droplets, (j, k), settings)
+
+Piecewise collision kernel from Eq. (11) in Long (1974),
+https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
+
+    K(x, x') = sq_coeff * (x_lg² + x_sm²)   if r_lg < r_thresh
+    K(x, x') = lin_coeff * (x_lg + x_sm)     if r_lg ≥ r_thresh
+
+where x is droplet volume and r_lg is the radius of the larger droplet.
+Default parameters: lin_coeff = 5.78e3 s⁻¹, sq_coeff = 9.44e15 m⁻³ s⁻¹, r_thresh = 5e-5 m.
+"""
+@inline function long1974(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
+    v_lg = max(droplets.X[j], droplets.X[k])
+    v_sm = min(droplets.X[j], droplets.X[k])
+    r_lg = volume_to_radius(v_lg)
+    if r_lg < settings.long_r_thresh
+        return settings.long_sq_coeff * (v_lg^2 + v_sm^2)
+    else
+        return settings.long_lin_coeff * (v_lg + v_sm)
+    end
 end

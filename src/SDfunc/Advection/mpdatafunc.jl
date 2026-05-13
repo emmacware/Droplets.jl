@@ -427,19 +427,20 @@ function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, set
 
     # Advect ρθl (conserved) rather than ρθ (not conserved across phase changes).
     # Using ql from superdroplets at their pre-advection positions.
-    ql = compute_ql_at_cell.(grid.states, 1:grid.nz)
-    Π  = (grid.states.P ./ constants.P0) .^ (constants.Rd / constants.Cp_air)
+    # ql = compute_ql_at_cell.(grid.states, 1:grid.nz)
+    # Π  = (grid.states.P ./ constants.P0) .^ (constants.Rd / constants.Cp_air)
 
     ρqv = grid.states.ρ .* grid.states.qv
-    ρθl = grid.states.ρ .* (grid.states.θ .- constants.L .* ql ./ (constants.Cp_air .* Π))
+    # ρθl = grid.states.ρ .* (grid.states.θ .- constants.L .* ql ./ (constants.Cp_air .* Π))
+    ρθ = grid.states.ρ .* grid.states.θ
     ρe = grid.states.ρ .* grid.states.e
 
     mpdata_step!(ρqv, GCz,tmp,settings)
-    mpdata_step!(ρθl, GCz,tmp,settings)
+    mpdata_step!(ρθ, GCz,tmp,settings)
     mpdata_step!(ρe, GCz,tmp,settings)
     mpdata_step!(grid.states.ρ, GCz,tmp,settings)
     grid.states.qv .= ρqv ./ grid.states.ρ
-    grid.states.θ .= ρθl ./ grid.states.ρ .+ constants.L .* ql ./ (constants.Cp_air .* Π)
+    grid.states.θ .= ρθ ./ grid.states.ρ #.+ constants.L .* ql ./ (constants.Cp_air .* Π)
     grid.states.e .= ρe ./ grid.states.ρ
     
     # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)

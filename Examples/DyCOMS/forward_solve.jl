@@ -9,10 +9,10 @@
 function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets::droplet_attributes{FT},
         coagsettings::coag_settings{FT}, spatialsettings::spatial_settings{FT},
         condensationsettings::condensation_settings{FT}, coagdata::coagulation_run_spatial,
-        conddata::condensation_data{FT}, raddata::radiation_data{FT},
+        conddata::condensation_data{FT}, raddata::radiation_data{FT},turbdata::turbulence_data{FT},
         diagnosticsettings::diagnostic_settings{FT},
         prescribed_w::Function, mpdatatmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
-        constants,
+        constants::Constants{FT},
         scmsettings::scm_settings{FT},
         tkesettings::tke_settings{FT},
         i::Int
@@ -33,14 +33,14 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     end
 
     if scmsettings.condensation_on
-        for t_cond in 1:10
+        for t_cond in 1:scmsettings.n_cond
             grid.states.T_tmp .= T_from_theta.(grid.states.θ, grid.states.P, constants)
-            condensation_time_step_spatial!(droplets, grid.states, nz, dt/10, conddata, constants, condensationsettings, spatialsettings, coagdata, raddata, i*dt)
+            condensation_time_step_spatial!(droplets, grid.states, nz, dt/scmsettings.n_cond, conddata, constants, condensationsettings, spatialsettings, raddata, i*dt)
         end
     end
 
     if scmsettings.coalescence_on && i*dt > scmsettings.spinup_time
-        for _ in 1:10
+        for t_coag in 1:scmsettings.n_coag
             coalescence_timestep!(scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
         end
     end
@@ -51,9 +51,13 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     update_droplet_positions!(droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
 
     #change sorting indexes if droplets moved
-    droplets.I .= sort(droplets.I, by = k -> droplets.z_loc[k])
-    recycle_precipitation!(droplets, grid, spatialsettings, diagnosticsettings, coagdata, constants, output_idx)
-    droplets.I .= sort(droplets.I, by = k -> droplets.cell_id[k])
+    # droplets.I .= sort(droplets.I, by = k -> droplets.z_loc[k])
+    sort!(droplets.I, by = k -> droplets.z_loc[k])
+
+    recycle_precipitation!(droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
+    # droplets.I .= sort(droplets.I, by = k -> droplets.cell_id[k])
+    sort!(droplets.I, by = k -> droplets.cell_id[k])
+
     for g in eachindex(droplets.grid_range)
         start = findfirst(k -> droplets.cell_id[k] == g, coagdata.I)
         if start == nothing
@@ -64,7 +68,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     end
 
     if scmsettings.turbulence_on
-        turb_timestep!(tkesettings.turbulence_scheme, grid, tkesettings, constants, dt, scmsettings)
+        turb_timestep!(grid, tkesettings, constants, dt, scmsettings, turbdata)
     end
 
     
@@ -75,10 +79,11 @@ end
 
 
 
-function condensation_time_step_spatial!(droplets, state, nz, Δtg,conddata,constants,condsettings,spatialsettings,coagdata,raddata,m_t)
+function condensation_time_step_spatial!(droplets::droplet_attributes{FT}, state::scm_states{FT}, nz::Int, Δtg::FT, conddata::condensation_data{FT}, constants, 
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::radiation_data{FT}, m_t::FT) where {FT<:AbstractFloat}
     # Calculate condensation time step for each droplet
-    Ns = length(droplets.X)
-    FT = eltype(droplets.X)
+    Ns = spatialsettings.Nz
+    # FT = eltype(droplets.X)
 
     conddata.vol_change_helper .= 0
     # for idrop in eachindex(droplets.X)
@@ -86,18 +91,17 @@ function condensation_time_step_spatial!(droplets, state, nz, Δtg,conddata,cons
     # end
 
     Threads.@threads for z in 1:nz
+    # for z in 1:nz
         if droplets.grid_range[z] == nothing
             continue
         end
-        k = coagdata.I[droplets.grid_range[z]]
+        @views begin
+        k = droplets.I[droplets.grid_range[z]]
 
-        X = droplets.X[k]
-        # R = volume_to_radius.(droplets.X[k])
         T_k = state.T_tmp[z]
         qv_k = state.qv[z]
         P_k = state.P[z]
         conddata.vol_change_helper[z] -= sum(droplets.X[k].* droplets.ξ[k])
-
 
         S_env = sat(qv_k, P_k) / esat(T_k)
         # if m_t<3600
@@ -124,12 +128,12 @@ function condensation_time_step_spatial!(droplets, state, nz, Δtg,conddata,cons
         state.T_tmp[z] += dqv * constants.L ./ (constants.Cp_air)
         state.θ[z] = theta_from_T(state.T_tmp[z], state.P[z], constants)
         state.ρ[z] = ρ_ideal_gas(state.P[z], state.T_tmp[z], state.qv[z], constants)
-        dX_rad = @view raddata.cond_rad_term[k]
+        dX_rad = raddata.cond_rad_term[k]
         # conddata.condensation_src[z] += vol_change_helper[z] .* constants.ρl ./ (state.ρ[z] .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
 
         conddata.condensation_rad_net[z] += sum(dX_rad .* droplets.ξ[k]) .* constants.ρl ./ (state.ρ[z] .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
         conddata.condensation_rad_abs[z] += sum(abs.(dX_rad) .* droplets.ξ[k]) .* constants.ρl ./ (state.ρ[z] .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
-
+        end # @views
     end
     
     # dqvap = - vol_change .* constants.ρl ./ (state.ρ .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
@@ -164,10 +168,11 @@ function recycle_precipitation!(droplets, grid, spatialsettings, diagnosticsetti
     if start == nothing
         return
     end
-    fallendrops_idx = start:findlast(k -> droplets.z_loc[k] <= 0, coagdata.I)
-    precip_mass = sum(droplets.X[fallendrops_idx] .* droplets.ξ[fallendrops_idx]) * constants.ρl
-    grid.output.surface_precipitation[output_step] += precip_mass / (spatialsettings.area_per_grid * spatialsettings.dt_output) #
-
+    @views begin
+        fallendrops_idx = start:findlast(k -> droplets.z_loc[k] <= 0, coagdata.I)
+        precip_mass = sum(droplets.X[fallendrops_idx] .* droplets.ξ[fallendrops_idx]) * constants.ρl
+        grid.output.surface_precipitation[output_step] += precip_mass / (spatialsettings.area_per_grid * spatialsettings.dt_output) #
+    end
     # Reinitialize precipitating droplets as aerosols in the top cell
     droplets.X[fallendrops_idx] .= 4pi/3 .*droplets.dry_r3[fallendrops_idx] # reset to dry mass
     droplets.cell_id[fallendrops_idx] .= spatialsettings.Nz # move to top

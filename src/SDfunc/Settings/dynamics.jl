@@ -29,7 +29,10 @@ Base.@kwdef struct coag_settings{FT<:AbstractFloat}
     R_max::FT = FT(1e-3)
     golovin_kernel_coeff::FT = FT(1.5e3)
     hydrodynamic_collision_eff_func::Bool = false
-    kernel::Function = golovin # golovin, hydrodynamic
+    long_lin_coeff::FT = FT(5.78e3)   # s⁻¹, Long (1974) linear regime coefficient
+    long_sq_coeff::FT  = FT(9.44e15)  # m⁻³ s⁻¹, Long (1974) quadratic regime coefficient
+    long_r_thresh::FT  = FT(5e-5)     # m, Long (1974) radius threshold
+    kernel::Function = golovin # golovin, hydrodynamic, long1974
     n0::FT = FT(2^23) # initial droplet concentration
     R0::FT = FT(30.531e-6) # initial radius
 end
@@ -41,3 +44,6 @@ Base.@kwdef struct condensation_settings{FT<:AbstractFloat}
     ρ_solute::FT = FT(1.78e3) # default Dycoms
 
 end
+
+Base.broadcastable(x::coag_settings) = Ref(x)
+Base.broadcastable(x::condensation_settings) = Ref(x)

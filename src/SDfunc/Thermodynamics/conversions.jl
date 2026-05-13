@@ -2,6 +2,7 @@
 export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T, calc_p, theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas, ρ_calc_θ
 export compute_ql_at_cell,θl_θ, θl
 export mixing_ratio, specific_humidity
+export theta_from_T!, ρ_ideal_gas!
 
 function calc_θ_dry(constants,θl, q_vap)
     FT = eltype(q_vap)
@@ -45,6 +46,10 @@ T_from_theta(θ,P,constants) = θ .* (P ./ constants.P0).^(constants.Rd / consta
 θl_θ(θ,ql,constants) = θ .- constants.L .*ql ./constants.Cp_air
 ρ_ideal_gas(P,T,q_vap,constants) = P ./ (constants.Rd .* T_virtual(T,q_vap))
 ρ_calc_θ(P,θ,q_vap,constants) = ρ_ideal_gas(P,T_from_theta(θ,P,constants),q_vap,constants)
+
+theta_from_T!(θ, T, P, constants) = @. θ = T * (constants.P0 / P)^(constants.Rd / constants.Cp_air)
+ρ_ideal_gas!(ρ, P, T, q_vap, constants) = @. ρ = P / (constants.Rd * T * (1 + 0.61 * q_vap))
+
 
 function compute_ql_at_cell(state, i) 
     if state.droplets.grid_range[i] == nothing

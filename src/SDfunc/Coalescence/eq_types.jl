@@ -81,7 +81,7 @@ struct coagulation_run_spatial{FT<:AbstractFloat} <:coagulation_run{FT}
     end
 end
 
-
+Base.broadcastable(x::coagulation_run_spatial) = Ref(x)
 
 #----------------------------------------------------------
 # COALESCENCE
@@ -197,24 +197,15 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
         if droplets.grid_range[g] == nothing
             continue
         end
-        # start = findfirst(i -> droplets.cell_id[i] == g, coag_data.I) 
-        # if start == nothing
-        #     droplets.grid_range[g] = nothing
-        #     continue
-        # end
-        # droplets.grid_range[g] = start:findlast(i -> droplets.cell_id[i] == g, coag_data.I)
-        coag_data.I[droplets.grid_range[g]] .= shuffle(coag_data.I[droplets.grid_range[g]]) 
+        shuffle!(@view coag_data.I[droplets.grid_range[g]])
+
         coag_data.first_in_pair[(droplets.grid_range[g])[1:2:end-1]] .= true
 
     end
 
-    map(i -> sdm_step!(i,droplets,coag_data,settings.kernel, settings), 1:Ns)
-
-    # compute_pαdt!(droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
-
-    # rand!(coag_data.ϕ)
-
-    # test_pairs!(run,L,droplets,coag_data)
+    # map(i -> sdm_step!(i,droplets,coag_data,settings.kernel, settings), 1:Ns)
+    sdm_step!.(1:Ns,droplets,coag_data,settings.kernel, settings)#, 1:Ns)
 
     return nothing
 end
+
