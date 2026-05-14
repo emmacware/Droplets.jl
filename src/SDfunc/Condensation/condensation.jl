@@ -182,45 +182,45 @@ function dXkappakohler_newtonraphson(droplets,i, kappa, T, Senv, constants,
     raddata,   # r -> dR/dt contribution from radiation
     absliq_r_interp,
     timestep, iters)
-R = volume_to_radius(droplets.X[i])
-dry_r3 = droplets.dry_r3[i]
-z = droplets.cell_id[i]
-A = akk(T)
-b = kappa * dry_r3
-fk = FK(T, constants)
-denom = fk + FD(T, constants)
-R2_old = R^2
+    R = volume_to_radius(droplets.X[i])
+    dry_r3 = droplets.dry_r3[i]
+    z = droplets.cell_id[i]
+    A = akk(T)
+    b = kappa * dry_r3
+    fk = FK(T, constants)
+    denom = fk + FD(T, constants)
+    R2_old = R^2
 
-r0 = R
-# F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*drrad_term(r0,T,radterm,constants,timestep)/denom
-F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*calc_cond_rad_term(r0,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
-R2 = max(R2_old + F0*timestep, R2_old*1e-4)
+    r0 = R
+    # F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*drrad_term(r0,T,radterm,constants,timestep)/denom
+    F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*calc_cond_rad_term(r0,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
+    R2 = max(R2_old + F0*timestep, R2_old*1e-4)
 
-for _ in 1:iters
-r  = sqrt(R2)
-F_cond = 2*(Senv - 1.0 - A/r + b/r^3) / denom
-F_rad  = 2*r * calc_cond_rad_term(r,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)      # re-evaluated at current r
-g  = R2 - R2_old - timestep*(F_cond + F_rad)
-gp = 1.0 - timestep*(A/(R2*r) - 3b/(R2^2*r)) / denom  # Jacobian: Köhler only, rad treated explicit
-δ  = g / gp
-R2 -= δ
-R2  = max(R2, R2_old*1e-6)
-abs(δ) < 1e-18*R2 && break
-end
+    for _ in 1:iters
+    r  = sqrt(R2)
+    F_cond = 2*(Senv - 1.0 - A/r + b/r^3) / denom
+    F_rad  = 2*r * calc_cond_rad_term(r,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)      # re-evaluated at current r
+    g  = R2 - R2_old - timestep*(F_cond + F_rad)
+    gp = 1.0 - timestep*(A/(R2*r) - 3b/(R2^2*r)) / denom  # Jacobian: Köhler only, rad treated explicit
+    δ  = g / gp
+    R2 -= δ
+    R2  = max(R2, R2_old*1e-6)
+    abs(δ) < 1e-18*R2 && break
+    end
 
-r_new   = sqrt(R2)
-F_cond  = 2*(Senv - 1.0 - A/r_new + b/r_new^3) / denom
-F_rad   = 2*r_new * calc_cond_rad_term(r_new,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
-f_total = F_cond + F_rad
+    r_new   = sqrt(R2)
+    F_cond  = 2*(Senv - 1.0 - A/r_new + b/r_new^3) / denom
+    F_rad   = 2*r_new * calc_cond_rad_term(r_new,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
+    f_total = F_cond + F_rad
 
-X_new    = max(radius_to_volume(r_new), 4/3*π*dry_r3)
-dX_total = X_new - radius_to_volume(R)
-dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
-dX_rad   = dX_total - dX_cond
+    X_new    = max(radius_to_volume(r_new), 4/3*π*dry_r3)
+    dX_total = X_new - radius_to_volume(R)
+    dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
+    dX_rad   = dX_total - dX_cond
 
-droplets.X[i] = X_new
-raddata.cond_rad_term[i] = dX_rad
-return #dX_cond, dX_rad
+    droplets.X[i] = X_new
+    raddata.cond_rad_term[i] = dX_rad
+    return #dX_cond, dX_rad
 end
 
 

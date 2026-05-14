@@ -134,26 +134,26 @@ function plot_output_timeseries(grid)
     time = grid.output.time ./ 3600
     t_skips = Int(floor(length(time)/5))
     z_centers = grid.centers_z
-    p1 = plot(grid.output.θ[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", legend=false)
-    p2 = plot(grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="qv (g/kg)", title="qv", legend=false)
-    p3 = plot(grid.output.cloud_heating_rate[:,1:t_skips:end]*3600, z_centers, ylabel="Height (m)", xlabel="Cloud Heating Rate (K/hr)", title="Cloud Heating Rate", legend=false)
+    p1 = plot(grid.output.θ[:,1:t_skips:end], z_centers, ylabel="z (m)", title="Potential Temperature", xlabel="θ", legend=false)
+    p2 = plot(grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="qv (g/kg)", title="qv", legend=false)
+    p3 = plot(grid.output.cloud_heating_rate[:,1:t_skips:end]*3600, z_centers, ylabel="z (m)", xlabel="Heating Rate (K/hr)", title="Heating Rate", legend=false)
     LWP = grid.output.LWP
     p4 = plot(time, LWP*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label = "Total")
     LWP_cloud = sum(grid.output.cloud_LWC, dims=1)' .* grid.dz
     p4 = plot!(time, LWP_cloud*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Cloud")
     LWP_rain = sum(grid.output.rain_LWC, dims=1)' .* grid.dz
     p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
-    LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
-    p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
+    # LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
+    # p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
     p5 = plot(time, grid.output.surface_precipitation *3600 * 24, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
-    # p6 = plot(grid.output.cloud_LWC[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud LWC (g/m3)", title="Cloud LWC", legend=false)
-    p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="ql (g/kg)", title="Cloud LWC", legend=false)
-    # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="Height (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
+    # p6 = plot((grid.output.cloud_LWC./grid.output.ρ)[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud ql (g/kg)", title="Cloud Liquid (not rain)", legend=false)
+    p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)
+    # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="z (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
     
     θl = θl_θ.(grid.output.θ[:,1:t_skips:end], grid.output.ql[:,1:t_skips:end], constants)
-    p7 = plot(θl, z_centers, ylabel="Height (m)", xlabel="Liquid Water Potential Temperature", title="θl", legend=false)
-    p8 = plot(grid.output.ql[:,1:t_skips:end]*1000 .+ grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="q tot(g/kg)", title="qtot", legend=false)
-    p9 = plot(grid.output.e[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Turbulent Kinetic Energy (J/kg)", title="TKE", legend=false)
+    p7 = plot(θl, z_centers, ylabel="z (m)", title="Liquid Water Potential Temperature", xlabel="θl", legend=false)
+    p8 = plot(grid.output.ql[:,1:t_skips:end]*1000 .+ grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="qt(g/kg)", title="qtot", legend=false)
+    p9 = plot(grid.output.e[:,1:t_skips:end], z_centers, ylabel="z (m)", xlabel="TKE [m2/s2]", title="TKE", legend=false)
 
     #p10 is inversion height and cloud base height timeseries. these need to be calculated from the profiles
     #inversion is where qt = 8 g/kg and cloud base is where cloud LWC > 0.01 g/m3
@@ -169,15 +169,15 @@ function plot_output_timeseries(grid)
     end
     p10 = plot(time, inv_height, xlabel="Time (h)", ylabel="Inversion Height (m)", label="z_inv")
     p10 = plot!(time, cloud_base_height, xlabel="Time (h)", ylabel="Height (m)", label="z_cb")
-    p11 = plot(grid.output.condensation_rad_abs[:,1:t_skips:end], z_centers, ylabel="Height (m)", xlabel="Condensation Rad Abs (W/m3)", title="Condensation Rad Abs", legend=false)
+    p11 = plot(grid.output.condensation_rad_abs[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="dqv[g/kg•s]", title="rad cond dqv", legend=false)
     condensation_time_series = sum(grid.output.condensation_src, dims=1)'
     condensation_time_series_rad_net = sum(grid.output.condensation_rad_net, dims=1)'
     condensation_time_series_rad_abs = sum(grid.output.condensation_rad_abs, dims=1)'
     if maximum(time) >1
         spinuptimeidx = findfirst(time .> 1)
-        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Mass Source (kg/m3/hr)", title="Condensation Mass Source", label="Mass")
-        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_net[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Rad Net (W/m3)", title="Condensation Mass Source", label="Rad Net")
-        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_abs[spinuptimeidx:end]*3600, xlabel="Time (h)", ylabel="Condensation Rad Abs (W/m3)", title="Condensation Mass Source", label="Rad Abs")
+        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="justdiffusion")
+        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_net[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="radiation")
+        # p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_abs[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="Rad Abs")
     else
         p12 = plot(time,condensation_time_series*3600, xlabel="Time (h)", ylabel="Condensation Mass Source (kg/m3/hr)", title="Condensation Mass Source", label="Mass")
     end

@@ -23,23 +23,9 @@ function update_droplet_positions!(droplets::droplet_attributes_1d, w_function::
     # droplets.cell_id .= Int.(floor.(droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1)
     droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
 
-    # for drop_i in eachindex(droplets.X)
-    #     each_droplet_position!(drop_i, droplets, w_function, Δt, spatialsettings, scmsettings, i)
-    # end
     return nothing
 end
 
-function each_droplet_position!(drop_i, droplets, w_function, Δt, spatialsettings,scmsettings, i)
-    if droplets.cell_id[drop_i] <= 1
-        return nothing
-    end
-    droplets.z_loc[drop_i] +=  w_function(droplets.z_loc[drop_i]) * Δt
-    if scmsettings.settling && i*Δt > scmsettings.spinup_time
-        droplets.z_loc[drop_i] -= terminal_v(volume_to_radius(droplets.X[drop_i])) * Δt
-    end
-    droplets.cell_id[drop_i] = Int(floor(droplets.z_loc[drop_i] / spatialsettings.z_grid_height) + 1)
-    return nothing
-end
 
 # function update_each_droplet!(i, droplets, w_function, Δt, spatialsettings)
 #     if droplets.cell_id[i] <= 1

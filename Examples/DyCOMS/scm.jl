@@ -25,7 +25,7 @@ const nz = Int(Z_max/dz)
 const dt = 1.0 #s
 const dt_coag = dt/10
 const dt_cond = dt/10
-Ns_per_grid = 32
+const Ns_per_grid = 200
 seed = 42
 const t_max = 3600*6#s
 const t_output = 60*5 #s
@@ -59,8 +59,8 @@ n2 = 65 * ccm_to_cm # m^-3, number concentration of mode 2
 n0 = n1 + n2 # m^-3, total number concentration
 m1,σ1 = (0.011e-6), log(1.2) # mode 1
 m2,σ2 = (0.06e-6), log(1.7) # mode 2
-# initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) + σ2^2,σ2)], [n1/n0, n2/n0])
-initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1),σ1),(log(m2),σ2)], [n1/n0, n2/n0])
+initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) + σ2^2,σ2)], [n1/n0, n2/n0])
+# initial_aerosol_dist = MixtureModel(LogNormal, [(log(m1),σ1),(log(m2),σ2)], [n1/n0, n2/n0])
 
 #Settings Structs
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output)
@@ -124,5 +124,6 @@ end
 
 penv = plot_env_profiles(grid)
 #put tkesettings.turbulence_scheme in the title
-plot!(plot_output_timeseries(grid))#,plot_title="$(tkesettings.turbulence_scheme),mixing_length=$(tkesettings.mixing_length_function)")
+ptime = plot!(plot_output_timeseries(grid),plot_title="Condensation Radiation Off")
 
+savefig("DyCOMS_SCM.pdf")

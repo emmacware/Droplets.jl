@@ -222,6 +222,17 @@ function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spat
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
     #2. Or, do we want to specify the atmosphere above the model top just for radiation?
+    raddata.flux_up_arr .= 0
+    raddata.flux_dn_arr .= 0
+    raddata.flux_net .= 0
+    raddata.hr_lay .= 0
+    raddata.flux_net_droplet .= 0
+    raddata.cond_rad_term .= 0
+    raddata.flux_up_lw .= 0
+    raddata.flux_dn_lw .= 0
+    raddata.flux_up_sw .= 0
+    raddata.flux_dn_sw .= 0
+
 
 
     # FT = eltype(raddata.flux_up_lw)
@@ -282,7 +293,7 @@ function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spat
         for glay in 1:grid.nz
             mask_lw[glay, 1] || continue
             bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
-            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])
+            raddata.flux_net_droplet[glay, ibnd] = - bb_flux + 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])
         end
     end
 
