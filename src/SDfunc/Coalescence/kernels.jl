@@ -4,6 +4,7 @@
 # KERNELS
 #---------------------------------------------------------
 export terminal_v,hydrodynamic,golovin,long1974, terminal_v_X
+include("hall_davis.jl")
 
 # terminal velocity of droplets (this should move..)
 """
@@ -52,27 +53,127 @@ function terminal_v_X(X::FT)::FT where FT<:AbstractFloat  # terminal velocity
 end
 
 
-#not working correctly:
-#collision efficiency function
-function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
-    #Parameterization from Berry 1967
-    #https://doi.org/10.1175/1520-0469(1967)024<0688:CDGBC>2.0.CO;2
-    r = max(R1,R2)*1e6
-    rs = min(R1,R2)*1e6
+# #not working correctly:
+# #collision efficiency function
+# function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
+#     #Parameterization from Berry 1967
+#     #https://doi.org/10.1175/1520-0469(1967)024<0688:CDGBC>2.0.CO;2
+#     r = max(R1,R2)*1e6
+#     rs = min(R1,R2)*1e6
 
-    p = rs/r
-    D = (-27)/(r^1.65)
-    E = (-58)/(r^1.9)
-    F = (15/r)^4 +1.13 
-    G = (16.7/r)^8 +1 +0.004*r
+#     p = rs/r
+#     D = (-27)/(r^1.65)
+#     E = (-58)/(r^1.9)
+#     F = (15/r)^4 +1.13 
+#     G = (16.7/r)^8 +1 +0.004*r
 
-    Y = 1+p+D/(p^F)+E/((1-p)^G)
-    if Y<0
-        Y=0
+#     Y = 1+p+D/(p^F)+E/((1-p)^G)
+#     Y < 0 && (Y = 0)
+#     Y < 1 && (Y = 1)
+#     # Y > 1 && error("Collision efficiency cannot be greater than 1. Check the input radii.")
+
+#     return Y
+# end
+
+function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
+    r_max = FT(1100)
+
+    # meters → micrometers
+    r1 = R1 * FT(1e6)
+    r2 = R2 * FT(1e6)
+
+    r1 = min(r1, r_max - FT(1e-6))
+    r2 = min(r2, r_max - FT(1e-6))
+
+    # lower grid point and spacing for each radius
+    if r1 >= FT(100)
+        x0 = floor(r1 / FT(10)) * FT(10);  dx = FT(10)
+    else
+        x0 = floor(r1);                     dx = FT(1)
     end
 
-    return Y
+    if r2 >= FT(100)
+        y0 = floor(r2 / FT(10)) * FT(10);  dy = FT(10)
+    else
+        y0 = floor(r2);                     dy = FT(1)
+    end
+
+    x1 = x0 + dx
+    y1 = y0 + dy
+
+    # radius (μm) → 0-based table index
+    idx(R) = R <= FT(100) ? Int(R) : 100 + Int((R - FT(100)) / FT(10))
+
+    # (i, j) → 1-based index into triangular-packed vector
+    tidx(i, j) = let ii = max(i, j), jj = min(i, j)
+        ii * (ii + 1) ÷ 2 + jj + 1
+    end
+
+    i00 = tidx(idx(x0), idx(y0))
+    i10 = tidx(idx(x1), idx(y0))
+    i01 = tidx(idx(x0), idx(y1))
+    i11 = tidx(idx(x1), idx(y1))
+
+    # bilinear interpolation
+    wx = r1 - x0
+    wy = r2 - y0
+
+    return (
+        hall_davis_efficiencies[i00] * (dx - wx) * (dy - wy) +
+        hall_davis_efficiencies[i10] *       wx  * (dy - wy) +
+        hall_davis_efficiencies[i01] * (dx - wx) *       wy  +
+        hall_davis_efficiencies[i11] *       wx  *       wy
+    ) / (dx * dy)
 end
+
+# function collision_efficiency(r1::FT, r2::FT) where {FT<:AbstractFloat}
+
+#     # ------------------------------------------------------------
+#     # Ensure ordering:
+#     # R = collector radius (larger)
+#     # r = collected radius (smaller)
+#     # ------------------------------------------------------------
+#     R = max(r1, r2)
+#     r = min(r1, r2)
+
+#     # convert to microns
+#     Rμ = R * FT(1e6)
+#     rμ = r * FT(1e6)
+
+#     # radius ratio
+#     p = rμ / Rμ
+
+#     # ------------------------------------------------------------
+#     # Tiny droplets: Davis/Klett-style suppression
+#     # ------------------------------------------------------------
+#     if Rμ < 20
+
+#         # strong hydrodynamic deflection
+#         Ec = FT(0.001) * (Rμ / 10)^2 * p^1.5
+
+#         return clamp(Ec, zero(FT), one(FT))
+#     end
+
+#     # ------------------------------------------------------------
+#     # Intermediate cloud droplets: Hall-like growth
+#     # ------------------------------------------------------------
+#     if Rμ < 100
+
+#         # empirical smooth growth
+#         Ec = FT(0.01) *
+#              (Rμ / 20)^1.8 *
+#              p^0.7
+
+#         return clamp(Ec, zero(FT), one(FT))
+#     end
+
+#     # ------------------------------------------------------------
+#     # Rain-drop regime
+#     # ------------------------------------------------------------
+#     Ec = FT(0.8) + FT(0.2) * tanh((Rμ - 100) / 50)
+
+#     return clamp(Ec, zero(FT), one(FT))
+# end
 
 
 # function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat

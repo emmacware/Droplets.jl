@@ -25,7 +25,7 @@ struct droplet_attributes_1d{FT<:AbstractFloat} <:droplet_attributes{FT}
     z_loc::Vector{FT}
     cell_id::Vector{Int}
     w_prime::Vector{FT}
-    grid_range::Vector{Union{UnitRange{Int}, Nothing}}
+    grid_range::Vector{UnitRange{Int}}
     I::Vector{Int}
 end
 

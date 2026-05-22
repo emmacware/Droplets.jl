@@ -140,10 +140,10 @@ struct radiation_data{FT<:AbstractFloat}
         layerdata = similar(zeros(laydim...), 4, nlay)
         Nz = grid.nz
         θ, qv, P, P_faces = grid.states.θ, grid.states.qv, grid.states.P,grid.states.P_faces
-        grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
+        T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,constants)
         T = grid.states.T_tmp
         Tsfc = 292.0
-        T1 = 0.5(T[1]+Tsfc)#2*T[1] - T[2] 
+        T1 = 0.5*(T[1]+Tsfc)#2*T[1] - T[2] 
         P_extra = range(P_faces[end], 30000, 21)
         T_extra = T_from_theta.(θ[end],P_extra, constants) 
         layerdata[2,:] = [P; P_extra[2:2:end-1]]
@@ -162,7 +162,7 @@ struct radiation_data{FT<:AbstractFloat}
         vmrat[idx_gases["n2"], :, 1] .= FT(0.7808)
         vmrat[idx_gases["o2"], :, 1] .= FT(0.2095)
         vmrat[idx_gases["co"], :, 1] .= FT(0)
-        vmrat[idx_gases["h2o"], :, 1] .= [grid.states.qv;range(qv[end], 1e-8, 11)[2:end]] .* constants.ϵ
+        vmrat[idx_gases["h2o"], :, 1] .= [mixing_ratio.(qv);range(mixing_ratio.(qv)[end], mixing_ratio(1e-8), 11)[2:end]] ./ constants.ϵ
         vmr = Vmr(CArad.DA(vmrat))
         ice_rgh = 2
         #Clima Structs
@@ -191,15 +191,17 @@ Base.broadcastable(x::radiation_clima_data_helper)= Ref(x)
 
 function fill_full_atmosphere(grid::scm_eulerian_arrays,as::AtmosphericState,constants::Constants,CArad::radiation_clima_data_helper)::Nothing
     Nz = grid.nz
-    grid.states.T_tmp .= T_from_theta.(grid.states.θ,grid.states.P,constants)
+    T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,constants)
     T = grid.states.T_tmp
-    T1 = 0.5(T[1]+292.0)# 2*T[1] - T[2]
+    T1 = 0.5*(T[1]+292.0)# 2*T[1] - T[2]
+    # T1 = 2*T[1] - T[2]
     t_lay = @view as.layerdata[3, :, 1]
     t_lay[1:Nz] .= T
     as.t_lev[1, 1] = T1
-    as.t_lev[2:Nz, 1] .= (@view(T[1:end-1]) .+ @view(T[2:end])) ./ 2
+    # as.t_lev[2:Nz, 1] .= (@view(T[1:end-1]) .+ @view(T[2:end])) ./ 2
+    @views as.t_lev[2:Nz,1] .= (T[1:end-1] .+ T[2:end]) .* 0.5
     # as.t_sfc         .= T1
-    as.vmr.vmr[CArad.idx_h2o, 1:Nz, 1] .= grid.states.qv .* constants.ϵ
+    as.vmr.vmr[CArad.idx_h2o, 1:Nz, 1] .=  mixing_ratio.(grid.states.qv) ./ constants.ϵ
 
     return nothing
 end
@@ -214,10 +216,11 @@ function fill_liquid_water_diagnostics(grid::scm_eulerian_arrays{FT}, diagnostic
     @. as.cloud_state.cld_frac = ifelse(as.cloud_state.cld_path_liq > 0.0, one(FT), zero(FT))
     @. as.cloud_state.mask_lw = as.cloud_state.cld_frac == 1
     as.cloud_state.mask_sw .= as.cloud_state.mask_lw
+
     return nothing
 end
 
-function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
+function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
     
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
@@ -227,7 +230,7 @@ function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spat
     raddata.flux_net .= 0
     raddata.hr_lay .= 0
     raddata.flux_net_droplet .= 0
-    raddata.cond_rad_term .= 0
+    # raddata.cond_rad_term .= 0
     raddata.flux_up_lw .= 0
     raddata.flux_dn_lw .= 0
     raddata.flux_up_sw .= 0
@@ -268,13 +271,16 @@ function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spat
     # solve_sw!(CArad.slv_sw, as, CArad.lookup_sw, CArad.lookup_sw_cld, nothing,raddata.metric_scaling)
 
     raddata.flux_net .= CArad.slv_lw.flux.flux_net #.+ CArad.slv_sw.flux.flux_net
-    cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
-    grav_ = FT(RRTMGP.Parameters.grav(param_set))
+    cp_d_ = constants.Cp_air#FT(RRTMGP.Parameters.cp_d(param_set))
+    grav_ = constants.gconst#FT(RRTMGP.Parameters.grav(param_set))
 
     compute_gray_heating_rate!(device,raddata.hr_lay,as.p_lev,ncol,nlay,raddata.flux_net,cp_d_,grav_)
 
-    grid.states.T_tmp .+= dt .* @view raddata.hr_lay[1:nz,1] 
-    raddata.cloud_heating_delta .+= dt .* @view raddata.hr_lay[1:nz,1]
+    hr = @view raddata.hr_lay[1:nz,1]
+
+
+    grid.states.T_tmp .+= dt .* hr 
+    raddata.cloud_heating_delta .+= dt .* hr
 
     # grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
     # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
@@ -293,15 +299,17 @@ function radiation_function!(grid::scm_eulerian_arrays{FT},spatialsettings::spat
         for glay in 1:grid.nz
             mask_lw[glay, 1] || continue
             bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
-            raddata.flux_net_droplet[glay, ibnd] = - bb_flux + 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])
-        end
+            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])       
+         end
     end
 
 
     return nothing#flux_net_droplet
 end
 
-
+function radiation_function!(::DynOFF,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, 
+    diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
+end
 
 
 

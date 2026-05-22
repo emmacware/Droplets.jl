@@ -184,7 +184,7 @@ end
 # end
 
 #totally rework
-function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
+function coalescence_timestep!(::DynON,run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
     coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
     
     # N_grids = coag_data.Ngrids
@@ -194,9 +194,7 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
     # droplets.grid_range .= [findfirst(i -> droplets.cell_id[i] == g, coag_data.I) : findlast(i -> droplets.cell_id[i] == g, coag_data.I) for g in 1:coag_data.Ngrids]
 
     for g in eachindex(droplets.grid_range)
-        if droplets.grid_range[g] == nothing
-            continue
-        end
+        isempty(droplets.grid_range[g]) && continue
         shuffle!(@view coag_data.I[droplets.grid_range[g]])
 
         coag_data.first_in_pair[(droplets.grid_range[g])[1:2:end-1]] .= true
@@ -209,3 +207,6 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplet
     return nothing
 end
 
+function coalescence_timestep!(::DynOFF,run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
+    coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
+end

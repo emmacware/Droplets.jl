@@ -58,6 +58,7 @@ struct scm_outputs{FT<:AbstractFloat}
     condensation_rad_net::Matrix{FT}
     condensation_rad_abs::Matrix{FT}
     cloud_heating_rate::Matrix{FT}
+    number::Matrix{FT}
 
     surface_precipitation::Vector{FT}
     LWP::Vector{FT}
@@ -86,7 +87,8 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
     condensation_src = zeros(FT, num_levels, n_output_steps)
     condensation_rad_net = zeros(FT, num_levels, n_output_steps)
     condensation_rad_abs = zeros(FT, num_levels, n_output_steps)
-    cloud_heating_rate = zeros(FT, num_levels, n_output_steps)   
+    cloud_heating_rate = zeros(FT, num_levels, n_output_steps)  
+    nconcentration = zeros(FT, num_levels, n_output_steps) 
 
     surface_precipitation = zeros(FT, n_output_steps)
     LWP = zeros(FT, n_output_steps)
@@ -99,6 +101,7 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
         condensation_rad_net,
         condensation_rad_abs,
         cloud_heating_rate,
+        nconcentration,
         surface_precipitation,
         LWP
         )
@@ -160,6 +163,12 @@ struct turbulence_data{FT<:AbstractFloat}
     K_e::Vector{FT} # diffusivity for TKE
     du::Vector{FT} # 
     dv::Vector{FT} #
+    a::Vector{FT} # sub-diagonal for implicit diffusion
+    b::Vector{FT} # main diagonal for implicit diffusion
+    c::Vector{FT} # super-diagonal for implicit diffusion
+    d::Vector{FT} # right-hand side for implicit diffusion
+    rhs::Vector{FT} # copy of field being diffused for implicit diffusion
+    K_faces::Vector{FT} # diffusivity at faces for implicit diffusion
 
     function turbulence_data(::Type{FT}, num_levels::Int)::turbulence_data{FT} where FT<:AbstractFloat
         l = zeros(FT, num_levels)
@@ -172,7 +181,13 @@ struct turbulence_data{FT<:AbstractFloat}
         K_e = zeros(FT, num_levels)
         du = zeros(FT, num_levels)
         dv = zeros(FT, num_levels)
-        return new{FT}(l, SM, SH, GM, GH, K_h, K_m, K_e, du, dv)
+        a = zeros(FT, num_levels)   # sub-diagonal for implicit diffusion
+        b = zeros(FT, num_levels)   # main diagonal for implicit diffusion
+        c = zeros(FT, num_levels)   # super-diagonal for implicit diffusion
+        d = zeros(FT, num_levels)   # right-hand side for implicit diffusion
+        rhs = zeros(FT, num_levels) # copy of field being diffused for implicit diffusion
+        K_faces = zeros(FT, num_levels+1) # diffusivity at faces
+        return new{FT}(l, SM, SH, GM, GH, K_h, K_m, K_e, du, dv, a, b, c, d, rhs, K_faces)
     end
 end
 

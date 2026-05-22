@@ -420,30 +420,54 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
 
     end
 end
-
-function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+function mpdata_scm!(::DynOFF,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+end
+function mpdata_scm!(::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 
     GCz = grid.wind.w * Δt ./ grid.dz
 
-    # Advect ρθl (conserved) rather than ρθ (not conserved across phase changes).
-    # Using ql from superdroplets at their pre-advection positions.
-    # ql = compute_ql_at_cell.(grid.states, 1:grid.nz)
-    # Π  = (grid.states.P ./ constants.P0) .^ (constants.Rd / constants.Cp_air)
 
-    ρqv = grid.states.ρ .* grid.states.qv
-    # ρθl = grid.states.ρ .* (grid.states.θ .- constants.L .* ql ./ (constants.Cp_air .* Π))
-    ρθ = grid.states.ρ .* grid.states.θ
-    ρe = grid.states.ρ .* grid.states.e
+    # ρqv = grid.states.ρ .* grid.states.qv
+    # ρθ = grid.states.ρ .* grid.states.θ
+    # ρe = grid.states.ρ .* grid.states.e
+    # ρu = grid.states.ρ .* grid.wind.u
+    # ρv = grid.states.ρ .* grid.wind.v
 
-    mpdata_step!(ρqv, GCz,tmp,settings)
-    mpdata_step!(ρθ, GCz,tmp,settings)
-    mpdata_step!(ρe, GCz,tmp,settings)
+
+    # mpdata_step!(ρqv, GCz,tmp,settings)
+    # mpdata_step!(ρθ, GCz,tmp,settings)
+    # mpdata_step!(ρe, GCz,tmp,settings)
+    # mpdata_step!(ρu, GCz, tmp, settings)
+    # mpdata_step!(ρv, GCz, tmp, settings)
+    # mpdata_step!(grid.states.ρ, GCz,tmp,settings)
+    # grid.states.qv .= ρqv ./ grid.states.ρ
+    # grid.states.θ .= ρθ ./ grid.states.ρ 
+    # grid.states.e .= ρe ./ grid.states.ρ
+    # grid.wind.u .= ρu ./ grid.states.ρ
+    # grid.wind.v .= ρv ./ grid.states.ρ
+
+    # #kind of naughty but we undo it within this function
+    grid.states.qv .*= grid.states.ρ
+    grid.states.θ .*= grid.states.ρ
+    grid.states.e .*= grid.states.ρ 
+    grid.wind.u .*= grid.states.ρ
+    grid.wind.v .*= grid.states.ρ
+
+
+    mpdata_step!(grid.states.qv, GCz,tmp,settings)
+    mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    mpdata_step!(grid.states.e, GCz,tmp,settings)
+    mpdata_step!(grid.wind.u, GCz, tmp, settings)
+    mpdata_step!(grid.wind.v, GCz, tmp, settings)
     mpdata_step!(grid.states.ρ, GCz,tmp,settings)
-    grid.states.qv .= ρqv ./ grid.states.ρ
-    grid.states.θ .= ρθ ./ grid.states.ρ #.+ constants.L .* ql ./ (constants.Cp_air .* Π)
-    grid.states.e .= ρe ./ grid.states.ρ
-    
-    # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
-    grid.states.ρ .= ρ_calc_θ(grid.states.P,grid.states.θ,grid.states.qv,constants)
+
+    grid.states.qv ./= grid.states.ρ
+    grid.states.θ ./= grid.states.ρ 
+    grid.states.e ./= grid.states.ρ
+    grid.wind.u ./= grid.states.ρ
+    grid.wind.v ./= grid.states.ρ
+
+
+    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
     return
 end

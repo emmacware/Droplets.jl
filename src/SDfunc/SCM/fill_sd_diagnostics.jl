@@ -15,7 +15,7 @@ function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid::scm_eulerian_
     diag.rain_effective_radius .= 0
 
     @inbounds for k in 1:spatial.Nz
-        sd.grid_range[k] === nothing && continue
+        isempty(sd.grid_range[k]) && continue
         aero_Xξ = zero(FT); aero_r3ξ = zero(FT); aero_r2ξ = zero(FT)
         cloud_Xξ = zero(FT); cloud_r3ξ = zero(FT); cloud_r2ξ = zero(FT)
         rain_Xξ  = zero(FT); rain_r3ξ  = zero(FT); rain_r2ξ  = zero(FT)
@@ -45,10 +45,11 @@ function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid::scm_eulerian_
     end
 end
 
-function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata,conddata,raddata,spatial::spatial_settings_1d, t::Int) where FT
+function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata::coagulation_run_spatial,conddata::condensation_data,raddata::Rad,spatial::spatial_settings_1d,constants::Constants{FT}, t::Int) where {FT,Rad}
     grid.output.P[:,t] .= grid.states.P
     grid.output.qv[:,t] .= grid.states.qv
-    grid.output.ql[:,t] .= compute_ql_at_cell.(grid.states, collect(1:grid.nz))
+    compute_ql_at_cell!.(grid.states, 1:grid.nz,constants)
+    grid.output.ql[:,t] .= grid.states.ql_tmp
     grid.output.ρ[:,t] .= grid.states.ρ
     grid.output.θ[:,t] .= grid.states.θ
     grid.output.u[:,t] .= grid.wind.u
@@ -73,9 +74,36 @@ function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata,condd
     grid.output.cloud_heating_rate[:,t] .= raddata.cloud_heating_delta / spatial.dt_output
     raddata.cloud_heating_delta .= 0.0
     grid.output.LWP[t] = sum(grid.diagnostics.cloud_LWC .+ grid.diagnostics.rain_LWC) * spatial.z_grid_height
+    fillnum!(grid,t)
     # grid.output.surface_precipitation[t] done elsewhere
 
     return nothing
 end
 
 # lwc and eff_r for aerosol, cloud, rain
+
+function fillnum!(grid::scm_eulerian_arrays{FT}, t::Int) where FT
+    nz = grid.nz
+    droplets = grid.states.droplets
+    # X_threshold = FT(4π/3) * FT(1e-6)^3
+    dziekan_cloud_fraction_bounds = (FT(5e-7), FT(25e-6))
+    X_threshold_dziekan = radius_to_volume.(dziekan_cloud_fraction_bounds)
+    for k in 1:nz
+        r = droplets.grid_range[k]
+        if isempty(r)
+            grid.output.number[k,t] = 0.0
+            continue
+        end
+        idxs = droplets.I[r]
+        # grid.diagnostics.cloud_LWC[k] == 0 && continue
+
+
+        # grid.output.number[k,t] = sum(droplets.ξ[i] for i in idxs if droplets.X[i] > X_threshold; init=0)
+        # grid.output.number[k,t] = sum(droplets.ξ[idxs])# for i in idxs if droplets.X[i] > X_threshold; init=0)
+        #now needs to be between dziekan bounds
+        grid.output.number[k,t] = sum(droplets.ξ[i] for i in idxs if droplets.X[i] > X_threshold_dziekan[1]; init=0)
+        grid.output.number[k,t] < 20*1e6*50 && (grid.output.number[k,t] = 0.0) 
+
+    end
+    return nothing
+end

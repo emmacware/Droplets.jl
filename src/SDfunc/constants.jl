@@ -44,7 +44,7 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     P0::FT = FT(100000.0)     # reference pressure Pa for potential temperature
     P_SLP::FT = FT(101325.0)     # standard sea level pressure Pa
     # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
-    ϵ::FT = FT(1.6080793637401138)           # molar mass ratio air and vapor
+    ϵ::FT = FT(Rd/Rv)           # 0.622 molar mass ratio vapor and air
     Ω::FT = FT(7.2921150e-5)     # Earth's rotation rate in radians per second
 end
 

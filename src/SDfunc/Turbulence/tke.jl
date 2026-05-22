@@ -6,19 +6,12 @@ export deardorff_mixing_length!
 
 
 
-function turb_timestep!(grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
+function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
     turbdata::turbulence_data) where FT
     nz = grid.nz
     dz = grid.dz
     droplets = grid.states.droplets
-    # K_m = zeros(FT, nz)
-    # K_h = zeros(FT, nz)
-    # K_e = zeros(FT, nz)
-    # l = zeros(FT, nz)
-    # SM = zeros(FT, nz)
-    # SH = zeros(FT, nz)
-    # GM = zeros(FT, nz)
-    # GH = zeros(FT, nz)
+
     l = turbdata.l
     SM = turbdata.SM
     SH = turbdata.SH
@@ -27,12 +20,24 @@ function turb_timestep!(grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, co
     K_h = turbdata.K_h
     K_m = turbdata.K_m
     K_e = turbdata.K_e
-
+    l .= 0
+    SM .= 0
+    SH .= 0
+    GM .= 0
+    GH .= 0
+    K_h .= 0
+    K_m .= 0
+    K_e .= 0
+    
+    e_prev = grid.states.e .+ 0
     
     # deardorff_mixing_length!(l, grid, tke, constants)
     bott_mixing_length!(l, grid, tke, constants)
 
     # calculate_Kh_Km!(turbscheme, K_h, K_m,K_e, l, N2,S2,SM,SH,GN,GH,grid, tke, constants)
+    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, constants)
+    compute_ql_at_cell!.(grid.states, 1:nz,constants)
+
     for k in 1:nz
         my25_stability_functions(l,K_h,K_m,K_e,GH,GM,SM,SH, k,tke,grid,constants)
     end
@@ -42,9 +47,15 @@ function turb_timestep!(grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, co
     # apply_counter_gradient!(grid, tke, K_h, constants, dt)
     tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
 
-    if scmsettings.turbulent_droplet_diffusion_on
-        turbulent_droplet_diffusion!(l, droplets, grid, tke, dt)
-    end
+
+    # turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
+    turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
+    # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt,e_prev)
+
+end
+
+function turb_timestep!(::DynOFF,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
+    turbdata::turbulence_data) where FT
 end
 
 
@@ -65,15 +76,15 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     theta_surf_flux = tke.SHF / (grid.states.ρ[1] * constants.Cp_air * (grid.states.P[1]/constants.P0)^(constants.Rd / constants.Cp_air))
 
 
-    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
+    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
     # implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
     # θ_my_bot!(θl_t,grid, constants) #
 
-    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
-    implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz, sfc_flux = surface_zonal_momentum_flux)
-    implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz, sfc_flux = surface_meridional_momentum_flux)
+    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux)
+    implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux)
 
-    grid.states.ρ .= ρ_calc_θ(grid.states.P, grid.states.θ, grid.states.qv, constants)
+    ρ_calc_θ!(grid.states.ρ,grid.states.P, grid.states.θ, grid.states.qv, constants)
 
     coriolis_parameter = 2 * constants.Ω * sind(31.5) #0.76e-4
     for k in 1:nz
@@ -86,32 +97,33 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     grid.wind.v .+= turbdata.dv .* dt
 
 
-    implicit_diffuse!(grid.states.e, K_e, dt, dz, nz, sfc_flux=2.5 * tke.u_star^3)
+    implicit_diffuse!(grid.states.e, K_e, dt, dz, nz,turbdata, sfc_flux=2.5 * tke.u_star^3)
     grid.states.e .= max.(grid.states.e, 0.0)
 
 end
 
 
-# function deardorff_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constants) where FT<:AbstractFloat
-#     nz  = grid.nz
-#     dry = tke.dry_buoyancy
-#     for k in 1:nz
-#         N2 = calculate_buoyancy_frequency(grid, k, constants; dry)
-#         if N2 > 0
-#             l[k] = min(tke.l_inf, c_n * sqrt(grid.states.e[k] / N2))
-#         else
-#             l[k] = tke.l_inf
-#         end
-#         lf = max(l[k], 1.0)
-#         lf1 = min(lf, grid.dz)
-#         l[k] = lf1
-#     end
-# end
+function deardorff_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constants) where FT<:AbstractFloat
+    nz  = grid.nz
+    dry = tke.dry_buoyancy
+    c_n = 0.1
+    for k in 1:nz
+        N2 = calculate_buoyancy_frequency(grid, k, constants; dry)
+        if N2 > 0
+            l[k] = min(70, c_n * sqrt(grid.states.e[k] / N2))
+        else
+            l[k] = 70#tke.l_inf
+        end
+        lf = max(l[k], 1.0)
+        # lf1 = min(lf, grid.dz)
+        l[k] = lf
+    end
+end
 
 function bott_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constants) where FT<:AbstractFloat
     nz  = grid.nz
     dz = grid.dz
-    z_inv_idx = something(findfirst(k -> grid.states.qv[k] < 0.008, 1:nz), nz)
+    z_inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:nz) - 1
 
     z_inv = grid.centers_z[z_inv_idx]
     # l0 = alpha * z_inv
@@ -139,21 +151,21 @@ Mellor-Yamada (1982)
 Reference: Bott 96
 """
 function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT},K_e::Vector{FT},GH,GM,SM,SH, k,tke,grid,constants) where FT
-    grid.states.ql_tmp[k] = compute_ql_at_cell(grid.states, k)
+    compute_ql_at_cell!(grid.states, k,constants)
     # dry = tke.dry_buoyancy
     # Π = (grid.states.P[k] / constants.P0) ^ (constants.Rd / constants.Cp_air)
 
-    # θl = θl_t[k]#grid.states.θ - constants.L .* grid.states.ql_tmp ./ (constants.Cp_air .* Π) # plot this against bott version
-    # dθldz_k = dθldz(θl_t, grid, k, constants)
+    θl_k = θl(grid.states.P[k],grid.states.T_tmp[k],grid.states.ql_tmp[k],constants)
 
     q      = sqrt(2 * max(grid.states.e[k], tke.e_min))
-    N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
+    # N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
+    # N2 = moist_buoyancy_frequency(grid, k, constants)
     S2  = S2_flow_deformation(grid, k, constants)
     l2_2e = l[k]^2 / q^2 
 
-    GH[k]  = - l2_2e * N2
+    # GH[k]  = - l2_2e * N2
     # GH[k]  = -constants.gconst * l2_2e * dθldz_k / θl
-    # GH[k] =  - constants.gconst * l2_2e / θl * bott1997term(grid,k,constants,θl_t)
+    GH[k] =  - constants.gconst * l2_2e / θl_k * bott1997term(grid,k,constants)
     GM[k]  = l2_2e * S2
 
     GH[k] = clamp(GH[k], tke.GH_lims[1], tke.GH_lims[2])
@@ -204,7 +216,7 @@ end
 
 
 
-function bott1997term(grid, k, constants, θl_t)
+function bott1997term(grid, k, constants)
     FT  = eltype(grid.states.θ)
     nz  = grid.nz
     dz  = grid.dz
@@ -212,7 +224,11 @@ function bott1997term(grid, k, constants, θl_t)
     km  = max(k - 1, 1)
     dz_eff = (k == 1 || k == nz) ? dz : 2.0 * dz
 
-    dθldz_k = dθldz(θl_t, grid, k, constants)
+    θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],  constants)
+    θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp], constants)
+    θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km], constants)
+
+    dθldz_k = (θl_kp - θl_km) / dz_eff
     qt_k  = grid.states.qv[k]  + grid.states.ql_tmp[k]
     qt_kp = grid.states.qv[kp] + grid.states.ql_tmp[kp]
     qt_km = grid.states.qv[km] + grid.states.ql_tmp[km]
@@ -221,7 +237,6 @@ function bott1997term(grid, k, constants, θl_t)
     ql   = grid.states.ql_tmp[k]
     T    = grid.states.T_tmp[k]
     θ    = grid.states.θ[k]
-    θl   = θl_t[k]
     qsat = saturation_specific_humidity(θ, grid.states.P[k], constants)
     S_env = sat(grid.states.qv[k], grid.states.P[k]) / esat(T)
 
@@ -229,8 +244,8 @@ function bott1997term(grid, k, constants, θl_t)
     b1 = 1 + 0.61*qt_k - 1.61*ql
     a1 = (1 + constants.L^2 * qsat / (constants.Cp_air * constants.Rv * T^2))^(-1)
     a2 = a1 * constants.L * qsat / (constants.Rv * T * θ)
-    b2 = (1 + 0.61*qt_k - 3.22*ql) * (constants.L * θ) / (constants.Cp_air * T) - 1.61*θl
-    b3 = 0.61 * (θl + constants.L * θ * ql / (constants.Cp_air * T))
+    b2 = (1 + 0.61*qt_k - 3.22*ql) * (constants.L * θ) / (constants.Cp_air * T) - 1.61*θl_k
+    b3 = 0.61 * (θl_k + constants.L * θ * ql / (constants.Cp_air * T))
 
     return (b1 - b2*a2*α)*dθldz_k + (b3 + b2*a1*α)*dqtdz_k
 end

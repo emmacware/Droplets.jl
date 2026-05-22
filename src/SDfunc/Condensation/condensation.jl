@@ -9,8 +9,8 @@ export set_X_crit!,find_equilibrium_radius
 export dM_dt
 export drkappakohler
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
-export drrad_term, dXkappakohler_newtonraphson
-export calc_cond_rad_term
+export calc_cond_rad_term, dXkappakohler_bisection
+export limitsat, condensation_time_step_spatial!
 ######################################################################
 # 
 
@@ -24,26 +24,26 @@ Uses the constants structs defined in Droplets
 - `T`: Temperature in K
 """
 function FK(T,constants) 
-    Fk = (constants.L ./(constants.Rv.*T) .-1).*(constants.L*constants.ρl)./(constants.k .*T) 
+    Fk = (constants.L /(constants.Rv *T) -1)*(constants.L*constants.ρl)/(constants.k *T) 
     return Fk
 end
 
 function FD(T,constants)
-    Fd = constants.ρl*constants.Rv .*(T)./(constants.Dv .* esat(T))
+    Fd = constants.ρl*constants.Rv *(T)/(constants.Dv * esat(T))
     return Fd
 end
 
-akk(T) = 3.3 * 10^(-7) / T #(m K/T)
-bkk(m) = 4.3 * 2 / m / 1e6 #m^3 for NaCL
+@inline akk(T) = 3.3 * 10^(-7) / T #(m K/T)
+@inline bkk(m) = 4.3 * 2 / m / 1e6 #m^3 for NaCL
 
 ######################################################################
 # Saturation Functions
 
 #saturation vapor pressure
-esat(T) = 100*6.1094.*exp.(17.625.*(T.-273)./((T.-273) .+243.04)) ## August–Roche–Magnus approximation, hPa to Pa, T in K, converted to C
+@inline esat(T) = 610.94 * exp(17.625 * (T - 273.15) / ((T - 273.15) + 243.04)) ## August–Roche–Magnus approximation, hPa to Pa, T in K, converted to C
 
-#environmntal saturation based on the mixing ratio of water vapor to air
-sat(qvarray,P) = qvarray.*P./(0.378.*qvarray .+ 0.622) ##qvarray is the specific humidity: mixing ratio of water vapor to moist air, Pa
+#environmntal vapor pressure based on the mixing ratio of water vapor to air
+@inline sat(qv::FT,P::FT) where FT<:AbstractFloat = FT(qv*P/(FT(0.378)*qv + FT(0.622))) ##qvarray is the specific humidity: mixing ratio of water vapor to moist air, Pa
 
 
 ######################################################################
@@ -128,33 +128,60 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function dXkappakohler_newtonraphson(R, dry_r3, kappa, T, Senv, constants,timestep, iters)
-    # Fully implicit solve for R²_new via Newton-Raphson.
-    # Find u = R²_new such that g(u) = u - R²_old - dt·F(u) = 0,
-    # where F(u) = dR²/dt = 2(S-1 - A/√u + B/u^{3/2}) / denom.
-    # g'(u) = 1 - dt·F'(u),  F'(u) = (A/r³ - 3B/r⁵) / denom  (r = √u)
-    A = akk(T)
-    b = kappa * dry_r3
-    denom = FK(T, constants) + FD(T, constants)
-    R2_old = R^2
-
-    # Initial guess: explicit Euler step in R²
-    F0 = 2 * (Senv - 1.0 - A/R + b/R^3) / denom
-    R2 = max(R2_old + F0 * timestep, R2_old * 1e-4)
-
-    for _ in 1:iters
-        r  = sqrt(R2)
-        F  = 2 * (Senv - 1.0 - A/r + b/r^3) / denom
-        g  = R2 - R2_old - timestep * F
-        R2r = R2 * r
-        gp = 1.0 - timestep * (A/R2r - 3*b/(R2*R2r)) / denom
-        δ  = g / gp
-        R2 -= δ
-        R2  = max(R2, R2_old * 1e-6)   # keep positive
-        abs(δ) < 1e-18 * R2 && break
+function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
+    raddata::Rad,
+    absliq_r_interp::Abs,
+    timestep::FT, iters::Int) where {FT, Abs,Rad}
+    R      = volume_to_radius(droplets.X[i])
+    dry_r3 = droplets.dry_r3[i]
+    dry_r  = cbrt(dry_r3)
+    A      = akk(T)
+    b      = kappa * dry_r3
+    c      = FT(2) / (FK(T, constants) + FD(T, constants))
+    S1     = Senv - one(FT)
+    R2     = R * R
+    F0     = c * (S1 -A/R + b/R^3) 
+    
+    # bisect in r-space: g(r) = r² - R²_old - Δt·c·(S1 + (b - A·r²)/r³)
+    # one sqrt for the non-trivial bracket bound; none inside the loop
+    if F0 >= 0
+        lo_r = max(dry_r, R)
+        hi_r = sqrt(R2 + FT(2) * F0 * timestep)
+    else
+        lo_r = sqrt(max(dry_r * dry_r, R2 + FT(2) * F0 * timestep))
+        hi_r = R
     end
 
-    return max(radius_to_volume(sqrt(R2)), 4/3*pi *dry_r3)# - radius_to_volume(R)
+    lo2  = lo_r * lo_r;#  lo3 = lo2 * lo_r
+    g_lo = lo2 - R2 - timestep * c * (S1 - A / lo_r + b / (lo2 * lo_r))
+    hi2  = hi_r * hi_r;  hi3 = hi2 * hi_r
+    g_hi = hi2 - R2 - timestep * c * (S1 - A / hi_r + b / (hi2 * hi_r))
+    r_new = (lo_r + hi_r) * FT(0.5)
+    
+
+    if g_lo * g_hi >= 0
+        r_new = max(r_new, dry_r)
+        droplets.X[i] = FT(4π/3) * r_new^3
+        return
+    end 
+    
+    for _ in 1:iters
+        r2 = (lo2 + hi2) * FT(0.5)
+        # r    = sqrt(r2)
+        r3    = r2 ^ (3/2)  
+        g_mid = r2 - R2 - timestep * c * (S1 + (b - A * r2) / r3)
+        if g_lo * g_mid <= 0
+            hi2 = r2;  g_hi = g_mid
+        else
+            lo2 = r2;  g_lo = g_mid
+        end
+        (hi2 - lo2) < 1e-10 * r2 && break
+    end
+    r2 = (lo2 + hi2) * FT(0.5)
+
+    r_new = max(sqrt(r2), dry_r)
+    droplets.X[i] = FT(4π/3) * r_new^3
+    return
 end
 
 function drrad_term(R, T, rad_term,constants, timestep)
@@ -164,7 +191,7 @@ function drrad_term(R, T, rad_term,constants, timestep)
     return R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function calc_cond_rad_term(R,z,constants,raddata,absliq_r_interp)
+function calc_cond_rad_term(R::FT,z::Int,constants::Constants{FT},raddata::Rad,absliq_r_interp::Abs) where {FT,Rad,Abs}
     if R < 2.5e-6 || R > 4e-5
         return 0.0
     end
@@ -172,57 +199,93 @@ function calc_cond_rad_term(R,z,constants,raddata,absliq_r_interp)
     n_bnd = raddata.CArad.nband_lw
     for ibnd in 1:n_bnd
         abs_drop = absliq_r_interp[ibnd](R*1.0e6)
-        Qa = abs_drop * radius_to_volume(R) * constants.ρl * kg_to_g / (pi *R^2) #grams
-        condradterm += Qa * raddata.flux_net_droplet[z,ibnd]
+        # Qa = abs_drop * radius_to_volume(R) * constants.ρl * kg_to_g / (pi *R^2) #grams
+        Qa = abs_drop * 4/3 * R * constants.ρl * kg_to_g
+        condradterm += Qa * raddata.flux_net_droplet[z,ibnd] * 2 * R / (constants.L * constants.ρl) 
     end
     return condradterm
 end
 
-function dXkappakohler_newtonraphson(droplets,i, kappa, T, Senv, constants,
-    raddata,   # r -> dR/dt contribution from radiation
-    absliq_r_interp,
-    timestep, iters)
-    R = volume_to_radius(droplets.X[i])
+function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
+    raddata::Rad,
+    absliq_r_interp::Abs,
+    timestep::FT, iters::Int) where {FT, Abs,Rad}
+    X_old  = droplets.X[i]
+    R      = volume_to_radius(X_old)
     dry_r3 = droplets.dry_r3[i]
-    z = droplets.cell_id[i]
-    A = akk(T)
-    b = kappa * dry_r3
-    fk = FK(T, constants)
-    denom = fk + FD(T, constants)
-    R2_old = R^2
+    dry_r  = cbrt(dry_r3)
+    z      = droplets.cell_id[i]
+    A      = akk(T)
+    b      = kappa * dry_r3
+    fk     = FK(T, constants)
+    c      = FT(2) / (fk + FD(T, constants))
+    S1     = Senv - one(FT)
+    R2     = R * R
 
-    r0 = R
-    # F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*drrad_term(r0,T,radterm,constants,timestep)/denom
-    F0 = 2*(Senv - 1.0 - A/r0 + b/r0^3)/denom + 2*r0*calc_cond_rad_term(r0,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
-    R2 = max(R2_old + F0*timestep, R2_old*1e-4)
+    rad0 = calc_cond_rad_term(R, z, constants, raddata, absliq_r_interp)
+    F0   = c * (S1 + (b - A * R2) / (R2 * R)) + rad0
 
-    for _ in 1:iters
-    r  = sqrt(R2)
-    F_cond = 2*(Senv - 1.0 - A/r + b/r^3) / denom
-    F_rad  = 2*r * calc_cond_rad_term(r,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)      # re-evaluated at current r
-    g  = R2 - R2_old - timestep*(F_cond + F_rad)
-    gp = 1.0 - timestep*(A/(R2*r) - 3b/(R2^2*r)) / denom  # Jacobian: Köhler only, rad treated explicit
-    δ  = g / gp
-    R2 -= δ
-    R2  = max(R2, R2_old*1e-6)
-    abs(δ) < 1e-18*R2 && break
+    if F0 >= 0
+        lo_r = max(dry_r, R)
+        hi_r = sqrt(R2 + FT(2) * F0 * timestep)
+    else
+        lo_r = sqrt(max(dry_r * dry_r, R2 + FT(2) * F0 * timestep))
+        hi_r = R
     end
 
-    r_new   = sqrt(R2)
-    F_cond  = 2*(Senv - 1.0 - A/r_new + b/r_new^3) / denom
-    F_rad   = 2*r_new * calc_cond_rad_term(r_new,z,constants,raddata,absliq_r_interp) * fk / (constants.L*constants.ρl * denom)
-    f_total = F_cond + F_rad
+    lo2  = lo_r * lo_r;  lo3 = lo2 * lo_r
+    g_lo = lo2 - R2 - timestep * (c * (S1 + (b - A * lo2) / lo3) + calc_cond_rad_term(lo_r, z, constants, raddata, absliq_r_interp))
+    hi2  = hi_r * hi_r;  hi3 = hi2 * hi_r
+    g_hi = hi2 - R2 - timestep * (c * (S1 + (b - A * hi2) / hi3) + calc_cond_rad_term(hi_r, z, constants, raddata, absliq_r_interp))
+    r2_new = (lo2 + hi2) * FT(0.5)
 
-    X_new    = max(radius_to_volume(r_new), 4/3*π*dry_r3)
-    dX_total = X_new - radius_to_volume(R)
+    if g_lo * g_hi >= 0
+        # r2_new = r_new * r_new
+        r_new  = max(sqrt(r2_new), dry_r)
+        X_new  = FT(4π/3) * r_new^3
+
+        F_cond = c * (S1 + (b - A * r_new*r_new) / (r_new * r_new * r_new))
+        F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
+        f_total = F_cond + F_rad
+        dX_total = X_new - X_old
+        dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
+    
+        droplets.X[i] = X_new
+        raddata.cond_rad_term[i] = dX_total - dX_cond
+        return
+    end
+
+    for _ in 1:iters
+        r2_new = (lo2 + hi2) * FT(0.5)
+        r_1 = sqrt(r2_new)
+        r3    = r2_new * r_1
+        rad_new = calc_cond_rad_term(r_1, z, constants, raddata, absliq_r_interp)
+        g_mid = r2_new - R2 - timestep * (c * (S1 + (b - A * r2_new) / r3) + rad_new)
+        if g_lo * g_mid <= 0
+            hi2 = r2_new;  g_hi = g_mid
+        else
+            lo2 = r2_new;  g_lo = g_mid
+        end
+        (hi2 - lo2) < 1e-10 * r2_new && break
+    end
+    r2_new = (lo2 + hi2) * FT(0.5)
+
+
+    r_new  = max(sqrt(r2_new), dry_r)
+    r2_new = r_new * r_new
+    X_new  = FT(4π/3) * r2_new*r_new
+
+    # one final eval at r_new to correctly split dX into condensation vs radiation
+    F_cond = c * (S1 + (b - A * r2_new) / (r2_new * r_new))
+    F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
+    f_total = F_cond + F_rad
+    dX_total = X_new - X_old
     dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
-    dX_rad   = dX_total - dX_cond
 
     droplets.X[i] = X_new
-    raddata.cond_rad_term[i] = dX_rad
-    return #dX_cond, dX_rad
+    raddata.cond_rad_term[i] = dX_total - dX_cond
+    return
 end
-
 
 """
     drkohler_activated(R, T, Senv, timestep)
@@ -477,43 +540,82 @@ end
 
 
 
+# function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
+#     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
+#     dry_r3 = droplets.dry_r3[drop_idx]
+#     dry_r = (dry_r3)^(1/3)
+#     R_guess = max(dry_r * 2, 1e-8)
+    
+#     for i in 1:4
+        
+#         kelvin_term = akk(T) / R_guess
+#         kappa_term = kappa * dry_r3 / (R_guess^3)
+        
+
+#         f = S_env - 1.0 - kelvin_term + kappa_term
+        
+#         if abs(f) < tol
+#             droplets.X[drop_idx] = radius_to_volume(R_guess)
+#             #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
+#             return
+#         end
+
+#         dS_dR = (-kelvin_term/R_guess + 3*kappa_term/R_guess)
+#         R_new = R_guess - f / dS_dR
+          
+#         R_new = max(R_new, dry_r * 1.01)  # Must be larger than dry radius
+#         R_new = min(R_new, 1e-3)          # Cap at 1mm
+        
+#         if abs(R_new - R_guess) < tol
+#             droplets.X[drop_idx] = radius_to_volume(R_new)
+#             #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
+#             return
+#         end
+        
+#         R_guess = R_new
+#     end
+    
+#     return
+# end
+
 function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
     dry_r3 = droplets.dry_r3[drop_idx]
     dry_r = (dry_r3)^(1/3)
-    R_guess = max(dry_r * 2, 1e-8)
-    
-    for i in 1:4
-        
-        kelvin_term = akk(T) / R_guess
-        kappa_term = kappa * dry_r3 / (R_guess^3)
-        
+    Sm1 = S_env - 1.0
 
-        f = S_env - 1.0 - kelvin_term + kappa_term
-        
-        if abs(f) < tol
-            droplets.X[drop_idx] = radius_to_volume(R_guess)
-            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
-            return
-        end
-
-        dS_dR = (-kelvin_term/R_guess + 3*kappa_term/R_guess)
-        R_new = R_guess - f / dS_dR
-          
-        R_new = max(R_new, dry_r * 1.01)  # Must be larger than dry radius
-        R_new = min(R_new, 1e-3)          # Cap at 1mm
-        
-        if abs(R_new - R_guess) < tol
-            droplets.X[drop_idx] = radius_to_volume(R_new)
-            #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
-            return
-        end
-        
-        R_guess = R_new
+    #use rcrit and do bisection
+    a_term = akk(T)
+    b_term = kappa * dry_r3
+    lo_r = dry_r
+    hi_r = sqrt(3 * b_term / a_term)
+    r_guess = (lo_r + hi_r) / 2
+    g_hi = Sm1 - a_term/hi_r + b_term/hi_r^3
+    g_lo = Sm1 - a_term/lo_r + b_term/lo_r^3
+    if g_hi * g_lo >= 0
+        r_guess = max(r_guess, dry_r)
+        droplets.X[drop_idx] = radius_to_volume(dry_r)
+        return
     end
-    
+
+    for _ in 1:max_iter
+       
+        g_mid = Sm1 - a_term/r_guess + b_term/r_guess^3
+        if g_lo * g_mid <= 0
+            hi_r = r_guess;  g_hi = g_mid
+        else
+            lo_r = r_guess;  g_lo = g_mid
+        end
+        (hi_r - lo_r) < 1e-10 * r_guess && break
+        r_guess = (lo_r + hi_r) * (0.5)
+    end
+    r_guess = (lo_r + hi_r) * (0.5)
+
+    r_new = max(dry_r,r_guess)
+    droplets.X[drop_idx] = radius_to_volume(r_new)
     return
 end
+
 
 
 
@@ -551,3 +653,56 @@ end
 #         end
 #     end
 # end
+
+
+limitsat(::DynON, S) = min(S, 1.01)
+limitsat(::DynOFF, S) = S
+function condensation_time_step_spatial!(::DynOFF,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+end
+function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+    # Calculate condensation time step for each droplet
+    # Ns = spatialsettings.Nz
+    # FT = eltype(droplets.X)
+
+    Threads.@threads for z in 1:nz
+        isempty(droplets.grid_range[z]) && continue
+        k = @view droplets.I[droplets.grid_range[z]]
+
+        T_k   = state.T_tmp[z]
+        S_env = limitsat(scmsettings.spinupsaturation, sat(state.qv[z], state.P[z]) / esat(T_k))
+
+        ΔVdrop = zero(FT)
+        for idrop in k
+            X_before = droplets.X[idrop]
+            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 50)
+            ΔVdrop += (droplets.X[idrop] - X_before) * droplets.ξ[idrop]
+        end
+        # conddata.vol_change_helper[z] = ΔV
+
+        inv_vol = constants.ρl / (state.ρ[z] * spatialsettings.area_per_grid * spatialsettings.z_grid_height)
+        dqv = -ΔVdrop * inv_vol#conddata.vol_change_helper[z] * inv_vol
+        conddata.condensation_src[z] -= dqv
+        state.qv[z]    += dqv
+        state.T_tmp[z] -= dqv * constants.L / constants.Cp_air
+        state.θ[z] = theta_from_T(state.T_tmp[z], state.P[z], constants)
+        state.ρ[z] = ρ_ideal_gas(state.P[z], state.T_tmp[z], state.qv[z], constants)
+
+        # inv_vol2 = constants.ρl / (state.ρ[z] * spatialsettings.area_per_grid * spatialsettings.z_grid_height)
+        if scmsettings.REM == DynON()
+            conddata.condensation_rad_net[z] += inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
+            conddata.condensation_rad_abs[z] += inv_vol * sum(i -> abs(raddata.cond_rad_term[i]) * droplets.ξ[i], k)
+            #let condensation_src just be the diffusional growth
+            conddata.condensation_src[z] -= inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
+        end
+    end
+    
+    # dqvap = - vol_change .* constants.ρl ./ (state.ρ .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
+    # state.qv .+= dqvap
+    # state.T_tmp .-= dqvap * constants.L ./ (constants.Cp_air)
+    # state.θ .= theta_from_T(state.T_tmp, state.P, constants)
+    # state.ρ .= ρ_ideal_gas(state.P, state.T_tmp, state.qv, constants)
+
+    return
+end

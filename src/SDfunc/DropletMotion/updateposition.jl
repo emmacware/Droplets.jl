@@ -11,21 +11,59 @@ export update_position!, update_droplet_positions!
 # limitvface(a, N_y) = a > N_y +1 ? N_y +1 : a < 1 ? 1 : a
 
 
-function update_droplet_positions!(droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
-    # map(i -> update_each_droplet!(i, droplets, w_function, Δt, spatialsettings), 1:length(droplets.X))
-    droplets.z_loc .+=  w_function.(droplets.z_loc).* Δt
-    droplets.z_loc .+= droplets.w_prime .* Δt
-    # droplets.z_loc .+= droplets.w_prime .* Δt
-    if scmsettings.settling && i*Δt > scmsettings.spinup_time
-        # droplets.z_loc .-= terminal_v.(volume_to_radius.(droplets.X)) .* Δt
-        droplets.z_loc .-= terminal_v_X.(droplets.X) .* Δt
-    end
-    # droplets.cell_id .= Int.(floor.(droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1)
-    droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
+function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynON,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+    @. droplets.z_loc += w_function(droplets.z_loc) * Δt
+    # @. droplets.z_loc += droplets.w_prime * Δt
+    @. droplets.z_loc -= terminal_v_X(droplets.X) * Δt
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+    # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
+    @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
 
     return nothing
 end
 
+function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynOFF,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+    @. droplets.z_loc += w_function(droplets.z_loc) * Δt
+    # @. droplets.z_loc += droplets.w_prime * Δt
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+
+    # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
+    @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
+
+    return nothing
+end
+
+function update_droplet_positions!(motion::DynON,advection::DynOFF,settling::DynON,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+    # droplets.z_loc .+= droplets.w_prime .* Δt
+    # droplets.z_loc .-= terminal_v_X.(droplets.X) .* Δt
+    # @. droplets.z_loc += droplets.w_prime * Δt
+    @. droplets.z_loc -= terminal_v_X(droplets.X) * Δt
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+    # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
+    @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
+
+    return nothing
+end
+
+function update_droplet_positions!(motion::DynOFF,advection::Dynamic,settling::Dynamic,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+end
+
+
+# function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynON,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+    
+#     for g in droplets.grid_range
+#         isempty(g) && continue
+#         idx = droplets.I[g]
+
+#         @. droplets.z_loc += w_function(droplets.z_loc) * Δt
+#         @. droplets.z_loc += droplets.w_prime * Δt
+#         @. droplets.z_loc -= terminal_v_X(droplets.X) * Δt
+#         @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+#         # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
+#         @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
+
+#     return nothing
+# end
 
 # function update_each_droplet!(i, droplets, w_function, Δt, spatialsettings)
 #     if droplets.cell_id[i] <= 1

@@ -1,5 +1,5 @@
 export spatial_settings, spatial_settings_1d, spatial_settings_2d, diagnostic_settings, scm_settings
-
+export Dynamic, DynON, DynOFF
 abstract type spatial_settings{FT<:AbstractFloat} end
 
 # Spatial Settings Struct
@@ -20,7 +20,7 @@ Base.@kwdef struct spatial_settings_1d{FT<:AbstractFloat} <:spatial_settings{FT}
     Nz::Int = 30 
     Z_max::FT = FT(1500.0)
     z_grid_height::FT = Z_max / Nz
-    area_per_grid::FT = 1.0 #m^2, only used for 1d case to calculate the volume of each grid cell
+    area_per_grid::FT = 100.0 #m^2, only used for 1d case to calculate the volume of each grid cell
     periodic_boundaries_x::Bool = true 
     settling::Bool = true 
     dt::FT = FT(1.0)
@@ -34,23 +34,62 @@ Base.@kwdef struct diagnostic_settings{FT<:AbstractFloat}
     cloud_rain_cuttoff::FT = radius_to_volume(40e-6)
 end
 
-Base.@kwdef struct scm_settings{FT<:AbstractFloat}
-    init_random_seed::Int = Int(30)
-    coag_threading =  Serial()
-    scheme = none()
-    Δt::FT = FT(1.0)
-    # surface_latent_heat_flux::FT = FT(93.0) # W/m^2
-    # surface_sensible_heat_flux::FT = FT(16.0) # W/m^2
-    n_cond::FT = Int(10)
-    n_coag::FT = Int(10)
-    spinup_time::FT = FT(3600.0)
-    # Process on/off switches
-    turbulence_on::Bool = true
-    condensation_on::Bool = true
-    radiation_on::Bool = true
-    coalescence_on::Bool = true
-    settling::Bool = true
-    # Turbulence diffusion options
-    # rho_weighted_diffusion::Bool = false          # use ρ-weighted diffuse_ρ_fields!; false = diffuse_fields!
-    turbulent_droplet_diffusion_on::Bool = true   # run OU-process droplet w' kick
+abstract type Dynamic end
+struct DynON <: Dynamic end
+struct DynOFF <: Dynamic end
+
+
+
+struct scm_settings{FT<:AbstractFloat, Thr, Sch,
+        Turb<:Dynamic, Cond<:Dynamic, REM_T<:Dynamic, Mot<:Dynamic,
+        SpinupSat<:Dynamic, Rad<:Dynamic, Coag<:Dynamic, Sett<:Dynamic,
+        Adv<:Dynamic, Rec<:Dynamic, TurbDiff<:Dynamic}
+    init_random_seed::Int
+    coag_threading::Thr
+    scheme::Sch
+    Δt::FT
+    n_cond::Int
+    n_coag::Int
+    spinup_time::FT
+    turbulence::Turb
+    condensation::Cond
+    REM::REM_T
+    motion::Mot
+    spinupsaturation::SpinupSat
+    radiation::Rad
+    coalescence::Coag
+    settling::Sett
+    advection::Adv
+    recycling::Rec
+    turbulent_droplet_diffusion_on::TurbDiff
+end
+
+function scm_settings{FT}(;
+        init_random_seed::Int             = Int(30),
+        coag_threading                    = Serial(),
+        scheme                            = none(),
+        Δt::FT                            = FT(1.0),
+        n_cond::Int                       = Int(10),
+        n_coag::Int                       = Int(10),
+        spinup_time::FT                   = FT(3600.0),
+        turbulence::Dynamic               = DynON(),
+        condensation::Dynamic             = DynON(),
+        REM::Dynamic                      = DynON(),
+        motion::Dynamic                   = DynON(),
+        spinupsaturation::Dynamic         = DynON(),
+        radiation::Dynamic                = DynON(),
+        coalescence::Dynamic              = DynON(),
+        settling::Dynamic                 = DynON(),
+        advection::Dynamic                = DynON(),
+        recycling::Dynamic                = DynON(),
+        turbulent_droplet_diffusion_on::Dynamic = DynON(),
+    ) where {FT<:AbstractFloat}
+    scm_settings{FT, typeof(coag_threading), typeof(scheme),
+        typeof(turbulence), typeof(condensation), typeof(REM), typeof(motion),
+        typeof(spinupsaturation), typeof(radiation), typeof(coalescence),
+        typeof(settling), typeof(advection), typeof(recycling),
+        typeof(turbulent_droplet_diffusion_on)}(
+        init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, spinup_time,
+        turbulence, condensation, REM, motion, spinupsaturation, radiation,
+        coalescence, settling, advection, recycling, turbulent_droplet_diffusion_on)
 end

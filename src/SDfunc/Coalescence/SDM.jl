@@ -228,12 +228,48 @@ Split the superdroplet with the highest multiplicity into two equal parts, as pr
 """
 
 
-function split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
+# function split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
+#     if maximum(droplets.ξ) > 1
+#         while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
+#             argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
+#             droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
+#             droplets.X[argmin_i] = droplets.X[argmax_i]
+
+#             droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
+#         end
+#     elseif (maximum(droplets.ξ) <= 1)
+
+#         println("Highest superdroplet cannot be split")
+#         #right now, break the model until this situation gets handled
+#         if (maximum(droplets.ξ) < 1)
+#             error("Highest and Lowest Superdroplet have ξ==0")
+#         end
+
+#         #Later:remove superdroplet.. how to handle between cells?
+
+#         # # Cannot split highest multiplicity superdroplet, have to remove superdroplet from system
+#         # println("Superdroplet ", argmin(ξ), " has multiplicity of ", ξ[argmin(ξ)], ", removing from system")
+#         # deleteat!(R,argmin(ξ))
+#         # # deleteat!(M,argmin(ξ))
+#         # deleteat!(X,argmin(ξ))
+#         # deleteat!(ξ,argmin(ξ))
+#         # # Ns=Ns-1
+#     end
+#     return nothing
+# end
+
+
+
+function split_highest_multiplicity!(droplets::droplet_attributes_1d{FT}) where FT<:AbstractFloat
     if maximum(droplets.ξ) > 1
         while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
             argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
             droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
             droplets.X[argmin_i] = droplets.X[argmax_i]
+            droplets.dry_r3[argmin_i] = droplets.dry_r3[argmax_i]
+            droplets.cell_id[argmin_i] = droplets.cell_id[argmax_i]
+            droplets.z_loc[argmin_i] = droplets.z_loc[argmax_i]
+            droplets.w_prime[argmin_i] = droplets.w_prime[argmax_i]
 
             droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
         end
@@ -267,7 +303,7 @@ end
 
 #############
 
-@inline function sdm_step!(i, droplets::droplet_attributes_1d,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+@inline function sdm_step!(i, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     if coag_data.first_in_pair[i] == false
         return nothing
     end
@@ -275,7 +311,7 @@ end
     step_Ps!(pair, droplets,coag_data,kernel,coagsettings)
 end
 
-@inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes,coag_data::coagulation_run,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+@inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     cell = droplets.cell_id[j]
     # if droplets.grid_range[cell] == nothing
     #     return nothing
@@ -289,7 +325,7 @@ end
     end
 end
 
-@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run,cell::Int) where FT<:AbstractFloat
+@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run_spatial,cell::Int) where FT<:AbstractFloat
 
     j,k = pair
     if droplets.ξ[j] < droplets.ξ[k]
