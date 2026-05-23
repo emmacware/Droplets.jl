@@ -215,7 +215,7 @@ function plot_output_timeseries(grid)
     condensation_time_series_rad_abs = sum(grid.output.condensation_rad_abs, dims=1)'
     if maximum(time) >1
         spinuptimeidx = findfirst(time .> 1)
-        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="justdiffusion")
+        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="total")
         p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_net[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="radiation")
         # p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_abs[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="Rad Abs")
     else

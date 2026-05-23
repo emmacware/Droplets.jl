@@ -25,9 +25,11 @@ function read_radiation_tables()
     device = ClimaComms.device(context)
     DA = ClimaComms.array_type(device)
 
-    lw_file = joinpath(@__DIR__, "../../data/rrtmgp-data-lw-g256-2018-12-04.nc")
+    # lw_file = joinpath(@__DIR__, "../../data/rrtmgp-data-lw-g256-2018-12-04.nc")
+    lw_file = joinpath(@__DIR__, "../../data/rrtmgp-gas-lw-g256.nc")
     sw_file = joinpath(@__DIR__, "../../data/rrtmgp-data-sw-g224-2018-12-04.nc")
-    lw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-lw-g256.nc")
+    # lw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-lw-g256.nc")
+    lw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-lw-bnd.nc")
     sw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-sw-g224.nc")
 
     # reading longwave gas optics lookup data
@@ -228,8 +230,8 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
     raddata.flux_up_arr .= 0
     raddata.flux_dn_arr .= 0
     raddata.flux_net .= 0
-    raddata.hr_lay .= 0
-    raddata.flux_net_droplet .= 0
+    # raddata.hr_lay .= 0
+    # raddata.flux_net_droplet .= 0
     # raddata.cond_rad_term .= 0
     raddata.flux_up_lw .= 0
     raddata.flux_dn_lw .= 0
@@ -299,7 +301,8 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
         for glay in 1:grid.nz
             mask_lw[glay, 1] || continue
             bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
-            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])       
+            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.25 * (raddata.flux_up_arr[glay-1, ibnd] + raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])       
+            # raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay, ibnd])       
          end
     end
 

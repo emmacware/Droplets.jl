@@ -184,32 +184,40 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
     return
 end
 
-function drrad_term(R, T, rad_term,constants, timestep)
-    fk = FK(T, constants)
-    denom = (fk + FD(T, constants))
-    dr = rad_term * fk / (constants.L*constants.ρl * denom)
-    return R + dr * timestep > 0 ? dr : -R / timestep
-end
 
 function calc_cond_rad_term(R::FT,z::Int,constants::Constants{FT},raddata::Rad,absliq_r_interp::Abs) where {FT,Rad,Abs}
     if R < 2.5e-6 || R > 4e-5
         return 0.0
     end
-    condradterm = 0.0
+    abs_fn = 0.0
     n_bnd = raddata.CArad.nband_lw
+    # tot_wn = 0.0
+    tot_flux = 0.0
+
+    # if R > 21.5e-6
+    #     R = 21.5e-6
+    # end
+
     for ibnd in 1:n_bnd
         abs_drop = absliq_r_interp[ibnd](R*1.0e6)
-        # Qa = abs_drop * radius_to_volume(R) * constants.ρl * kg_to_g / (pi *R^2) #grams
-        Qa = abs_drop * 4/3 * R * constants.ρl * kg_to_g
-        condradterm += Qa * raddata.flux_net_droplet[z,ibnd] * 2 * R / (constants.L * constants.ρl) 
+        # Qa = abs_drop * 4/3 * R * constants.ρl * kg_to_g
+        # Δwn = raddata.CArad.lookup_lw_cld.bnd_lims_wn[2, ibnd] - raddata.CArad.lookup_lw_cld.bnd_lims_wn[1, ibnd]
+
+        abs_fn += abs_drop * raddata.flux_net_droplet[z,ibnd]
+        # tot_flux += abs(raddata.flux_net_droplet[z,ibnd])
     end
-    return condradterm
+    # abs_fn /= tot_flux
+
+    rad_term = abs_fn * 4/3 * R * constants.ρl * kg_to_g #implicit ρlconversion for the multiplication and division of ρl
+
+    return rad_term * 2 * R #/ constants.L
 end
 
 function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
     raddata::Rad,
     absliq_r_interp::Abs,
     timestep::FT, iters::Int) where {FT, Abs,Rad}
+
     X_old  = droplets.X[i]
     R      = volume_to_radius(X_old)
     dry_r3 = droplets.dry_r3[i]
@@ -218,12 +226,15 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     A      = akk(T)
     b      = kappa * dry_r3
     fk     = FK(T, constants)
+    fd     = FD(T, constants)
     c      = FT(2) / (fk + FD(T, constants))
     S1     = Senv - one(FT)
     R2     = R * R
+    radcoeff = (fk/(constants.L *constants.ρl))/(fk+fd)
 
-    rad0 = calc_cond_rad_term(R, z, constants, raddata, absliq_r_interp)
-    F0   = c * (S1 + (b - A * R2) / (R2 * R)) + rad0
+    rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
+    Fcond0   = c * (S1 + (b - A * R2) / (R2 * R)) 
+    F0 = Fcond0 + rad0
 
     if F0 >= 0
         lo_r = max(dry_r, R)
@@ -234,9 +245,9 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     end
 
     lo2  = lo_r * lo_r;  lo3 = lo2 * lo_r
-    g_lo = lo2 - R2 - timestep * (c * (S1 + (b - A * lo2) / lo3) + calc_cond_rad_term(lo_r, z, constants, raddata, absliq_r_interp))
+    g_lo = lo2 - R2 - timestep * (c * (S1 + (b - A * lo2) / lo3) + radcoeff*calc_cond_rad_term(lo_r, z,constants, raddata, absliq_r_interp))
     hi2  = hi_r * hi_r;  hi3 = hi2 * hi_r
-    g_hi = hi2 - R2 - timestep * (c * (S1 + (b - A * hi2) / hi3) + calc_cond_rad_term(hi_r, z, constants, raddata, absliq_r_interp))
+    g_hi = hi2 - R2 - timestep * (c * (S1 + (b - A * hi2) / hi3) + radcoeff*calc_cond_rad_term(hi_r, z, constants, raddata, absliq_r_interp))
     r2_new = (lo2 + hi2) * FT(0.5)
 
     if g_lo * g_hi >= 0
@@ -244,11 +255,10 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         r_new  = max(sqrt(r2_new), dry_r)
         X_new  = FT(4π/3) * r_new^3
 
-        F_cond = c * (S1 + (b - A * r_new*r_new) / (r_new * r_new * r_new))
-        F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
-        f_total = F_cond + F_rad
+        # F_cond = c * (S1 + (b - A * r_new*r_new) / (r_new * r_new * r_new))
+        # F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
         dX_total = X_new - X_old
-        dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
+        dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
     
         droplets.X[i] = X_new
         raddata.cond_rad_term[i] = dX_total - dX_cond
@@ -256,10 +266,9 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     end
 
     for _ in 1:iters
-        r2_new = (lo2 + hi2) * FT(0.5)
         r_1 = sqrt(r2_new)
         r3    = r2_new * r_1
-        rad_new = calc_cond_rad_term(r_1, z, constants, raddata, absliq_r_interp)
+        rad_new = radcoeff * calc_cond_rad_term(r_1, z,constants, raddata, absliq_r_interp)
         g_mid = r2_new - R2 - timestep * (c * (S1 + (b - A * r2_new) / r3) + rad_new)
         if g_lo * g_mid <= 0
             hi2 = r2_new;  g_hi = g_mid
@@ -267,20 +276,24 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
             lo2 = r2_new;  g_lo = g_mid
         end
         (hi2 - lo2) < 1e-10 * r2_new && break
+        r2_new = (lo2 + hi2) * FT(0.5)
     end
-    r2_new = (lo2 + hi2) * FT(0.5)
+    
+    
+    r_new  = sqrt(r2_new)
+    
 
+    # F_cond = c * (S1 + (b - A * r2_new) / (r2_new * r_new))
+    # F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
 
-    r_new  = max(sqrt(r2_new), dry_r)
+    r_new  = max(r_new, dry_r)
     r2_new = r_new * r_new
     X_new  = FT(4π/3) * r2_new*r_new
 
     # one final eval at r_new to correctly split dX into condensation vs radiation
-    F_cond = c * (S1 + (b - A * r2_new) / (r2_new * r_new))
-    F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
-    f_total = F_cond + F_rad
+
     dX_total = X_new - X_old
-    dX_cond  = iszero(f_total) ? dX_total : dX_total * F_cond / f_total
+    dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
 
     droplets.X[i] = X_new
     raddata.cond_rad_term[i] = dX_total - dX_cond
@@ -676,7 +689,7 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
         ΔVdrop = zero(FT)
         for idrop in k
             X_before = droplets.X[idrop]
-            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 50)
+            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 10)
             ΔVdrop += (droplets.X[idrop] - X_before) * droplets.ξ[idrop]
         end
         # conddata.vol_change_helper[z] = ΔV
@@ -694,7 +707,7 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
             conddata.condensation_rad_net[z] += inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
             conddata.condensation_rad_abs[z] += inv_vol * sum(i -> abs(raddata.cond_rad_term[i]) * droplets.ξ[i], k)
             #let condensation_src just be the diffusional growth
-            conddata.condensation_src[z] -= inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
+            # conddata.condensation_src[z] -= inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
         end
     end
     

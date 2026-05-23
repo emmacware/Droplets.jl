@@ -93,13 +93,27 @@ function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagno
     precip_mass = zero(FT)
     for k in droplets.I
         droplets.z_loc[k] > 0 && continue
-        droplets.z_loc[k] == -10 && continue # already recycled
+        # droplets.z_loc[k] == -10 && continue # already recycled
+
+        #dont let turbulence cause "precipitation"
+        if droplets.X[k] < diagnosticsettings.aerosol_cloud_cuttoff
+            droplets.z_loc[k] = rand() * spatialsettings.z_grid_height
+            droplets.cell_id[k] = 1
+            continue
+        end
+
         precip_mass += droplets.X[k] * droplets.ξ[k] * constants.ρl
         # droplets.X[k] = 0#FT(4π/3) * droplets.dry_r3[k]
-        droplets.ξ[k] = 0#-10
-        droplets.cell_id[k] = -1#spatialsettings.Nz
-        droplets.z_loc[k] = -10#spatialsettings.Z_max - rand() * spatialsettings.z_grid_height
-        droplets.w_prime[k] = zero(FT)
+        recycle_idx = argmin(length.(droplets.grid_range[1:end-1]))
+        drop_to_split = droplets.I[droplets.grid_range[recycle_idx][end]]
+
+        droplets.ξ[k] = floor(Int,droplets.ξ[drop_to_split]/2)
+        droplets.X[k] = droplets.X[drop_to_split]
+        droplets.dry_r3[k] = droplets.dry_r3[drop_to_split]
+        droplets.cell_id[k] = droplets.cell_id[drop_to_split]
+        droplets.z_loc[k] = droplets.z_loc[drop_to_split]
+        droplets.w_prime[k] = FT(0.0)
+        droplets.ξ[drop_to_split] -= droplets.ξ[k]
     end
     grid.output.surface_precipitation[output_step] += precip_mass  / (spatialsettings.area_per_grid * spatialsettings.dt_output)
     return
