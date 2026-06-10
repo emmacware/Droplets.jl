@@ -104,7 +104,8 @@ function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagno
 
         precip_mass += droplets.X[k] * droplets.ξ[k] * constants.ρl
         # droplets.X[k] = 0#FT(4π/3) * droplets.dry_r3[k]
-        recycle_idx = argmin(length.(droplets.grid_range[1:end-1]))
+        eligible = findall(r -> length(r) >= 2, droplets.grid_range[1:end-1])
+        recycle_idx = isempty(eligible) ? argmax(length.(droplets.grid_range[1:end-1])) : eligible[argmin(length.(droplets.grid_range[eligible]))]
         drop_to_split = droplets.I[droplets.grid_range[recycle_idx][end]]
 
         droplets.ξ[k] = floor(Int,droplets.ξ[drop_to_split]/2)

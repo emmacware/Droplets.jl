@@ -3,6 +3,7 @@ export antiosc!, flux_faces, beta_function, beta_function_1d, find_extrema!, mpd
 
 limit(bc::Periodic,i,N) = i > N ? i - N : i < 1 ? i + N : i
 limit(bc::NoFlux,i,N) = i > N ? N + 1 - (i - N) : i < 1 ? i + (1 + abs(i)) : i
+limit(bc::Extrapolated,i,N) = clamp(i, 1, N)
 flux(ψL, ψR, GC;infinite_gauge::Bool=false) = infinite_gauge ? GC : (max(GC, 0) * ψL + min(GC, 0) * ψR)
 
 function flux_horizontal!(ϕ,ϕ_tmp,GCx;bc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)

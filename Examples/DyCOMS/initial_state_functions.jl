@@ -32,7 +32,7 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
 
     press = ODEProblem(dP_dz,P_surface,(0,maximum(grid.centers_z)+1),p)
     z_save = sort(unique([grid.centers_z; grid.faces_z]))
-    P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save)
+    P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save, tstops = [740.0])
     grid.states.P .= P_init.(grid.centers_z)
     grid.states.P_faces .= P_init.(grid.faces_z)
 
@@ -59,7 +59,7 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
     for k in range(1,nz)
         drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
         ρ_ratio = ρ_dry[k] / ρ_STP
-        # droplets.ξ[drop_idx] .= floor.(Int, droplets.ξ[drop_idx] .* ρ_ratio .+ 0.5)
+        droplets.ξ[drop_idx] .= floor.(Int, droplets.ξ[drop_idx] .* ρ_ratio .+ 0.5)
 
         T = T_from_theta(grid.states.θ[k], grid.states.P[k], constants)
         qv_k = grid.states.qv[k]
@@ -179,7 +179,7 @@ function plot_output_timeseries(grid)
     p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
     # LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
     # p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
-    p5 = plot(time, grid.output.surface_precipitation *3600 * 24, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
+    p5 = plot(time, grid.output.surface_precipitation *3600 * 24 * 1000, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
     # p6 = plot((grid.output.cloud_LWC./grid.output.ρ)[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud ql (g/kg)", title="Cloud Liquid (not rain)", legend=false)
     p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)
     # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="z (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
@@ -224,6 +224,156 @@ function plot_output_timeseries(grid)
     tplot = plot(p1, p2,p7,p8, p3, p4,p5,p6,p9,p10,p11,p12, layout=(4,3), size=(900,900))
     return tplot
 end
+
+function plot_ensemble_timeseries(rad_output, base_output, ref_grid)
+    seeds_rad  = collect(keys(rad_output))
+    seeds_base = collect(keys(base_output))
+    time       = base_output[first(seeds_base)].time ./ 3600
+    z_centers  = ref_grid.centers_z
+    n_t        = length(time)
+    t_skips    = max(1, Int(floor(n_t / 3)))
+    t_idx      = 1:t_skips:n_t
+
+    function ts_ribbon(output_dict, seeds, field)
+        mat = hcat([getfield(output_dict[s], field) for s in seeds]...)
+        med = [median(mat[i, :]) for i in 1:n_t]
+        lo  = [quantile(mat[i, :], 0.25) for i in 1:n_t]
+        hi  = [quantile(mat[i, :], 0.75) for i in 1:n_t]
+        med, med .- lo, hi .- med
+    end
+
+    function profile_stats(output_dict, seeds, field)
+        arr = cat([getfield(output_dict[s], field)[:, t_idx] for s in seeds]..., dims=3)
+        med = [median(arr[z, i, :]) for z in axes(arr, 1), i in axes(arr, 2)]
+        lo  = [quantile(arr[z, i, :], 0.25) for z in axes(arr, 1), i in axes(arr, 2)]
+        hi  = [quantile(arr[z, i, :], 0.75) for z in axes(arr, 1), i in axes(arr, 2)]
+        med, lo, hi
+    end
+
+    function add_ribbon_profiles!(p, med, lo, hi; scale=1.0)
+        for i in axes(med, 2)
+            shade_x = vcat(lo[:, i] .* scale, reverse(hi[:, i] .* scale))
+            shade_y = vcat(z_centers, reverse(z_centers))
+            plot!(p, shade_x, shade_y; seriestype=:shape, alpha=0.2, linewidth=0, color=i)
+            plot!(p, med[:, i] .* scale, z_centers; color=i, label="")
+        end
+    end
+
+    function add_dashed_profiles!(p, med; scale=1.0)
+        for i in axes(med, 2)
+            plot!(p, med[:, i] .* scale, z_centers; color=i, linestyle=:dash, label="")
+        end
+    end
+
+    function make_profile_plot(field, xlabel, title; scale=1.0)
+        med_b, lo_b, hi_b = profile_stats(base_output, seeds_base, field)
+        med_r = profile_stats(rad_output, seeds_rad, field)[1]
+        p = plot(; title, xlabel, ylabel="z (m)", legend=false)
+        add_ribbon_profiles!(p, med_b, lo_b, hi_b; scale)
+        add_dashed_profiles!(p, med_r; scale)
+        p
+    end
+
+    p1 = make_profile_plot(:θ,  "θ (K)",       "Potential Temperature")
+    p2 = make_profile_plot(:qv, "qv (g/kg)",   "qv"; scale=1000.0)
+    p6 = make_profile_plot(:ql, "ql (g/kg)",   "ql"; scale=1000.0)
+    p9 = make_profile_plot(:e,  "TKE [m²/s²]", "TKE")
+
+    function θl_profile_stats(output_dict, seeds)
+        arr = cat([θl.(output_dict[s].P[:, t_idx],
+                       T_from_theta.(output_dict[s].θ[:, t_idx],
+                                     output_dict[s].P[:, t_idx], constants),
+                       output_dict[s].ql[:, t_idx], constants)
+                   for s in seeds]..., dims=3)
+        ([median(arr[z, i, :])         for z in axes(arr,1), i in axes(arr,2)],
+         [quantile(arr[z, i, :], 0.25) for z in axes(arr,1), i in axes(arr,2)],
+         [quantile(arr[z, i, :], 0.75) for z in axes(arr,1), i in axes(arr,2)])
+    end
+    θl_b = θl_profile_stats(base_output, seeds_base)
+    θl_r = θl_profile_stats(rad_output, seeds_rad)
+    p7 = plot(; title="θl", xlabel="θl (K)", ylabel="z (m)", legend=false)
+    add_ribbon_profiles!(p7, θl_b[1], θl_b[2], θl_b[3])
+    add_dashed_profiles!(p7, θl_r[1])
+
+    function ts_plot(field; scale=1.0, ylabel="", title="")
+        med_b, lo_b, hi_b = ts_ribbon(base_output, seeds_base, field)
+        med_r, lo_r, hi_r = ts_ribbon(rad_output,  seeds_rad,  field)
+        p = plot(time, med_b .* scale; ribbon=(lo_b .* scale, hi_b .* scale),
+                 fillalpha=0.3, label="base", ylabel, title, xlabel="Time (h)")
+        plot!(p, time, med_r .* scale; ribbon=(lo_r .* scale, hi_r .* scale),
+              fillalpha=0.3, label="rad")
+        p
+    end
+    p4 = ts_plot(:LWP;                  scale=1000.0,    ylabel="LWP (g/m²)",   title="LWP")
+    p5 = ts_plot(:surface_precipitation; scale=3600*24.0, ylabel="pr (mm/day)", title="Precipitation")
+
+    function cloud_layer_heights(output_dict, seeds)
+        qt_arr  = cat([output_dict[s].ql  .+ output_dict[s].qv for s in seeds]..., dims=3)
+        num_arr = cat([output_dict[s].number for s in seeds]..., dims=3)
+        inv_h = zeros(n_t); cb_h = fill(NaN, n_t)
+        for t in 1:n_t
+            qt_med  = [median(qt_arr[z,  t, :]) for z in axes(qt_arr,  1)]
+            num_med = [median(num_arr[z, t, :]) for z in axes(num_arr, 1)]
+            idx_inv = findfirst(qt_med .< 0.008)
+            inv_h[t] = idx_inv === nothing ? NaN : z_centers[idx_inv]
+            idx_cb  = findfirst(num_med[5:end] .> 0)
+            cb_h[t]  = idx_cb  === nothing ? NaN : z_centers[idx_cb]
+        end
+        inv_h, cb_h
+    end
+    inv_b, cb_b = cloud_layer_heights(base_output, seeds_base)
+    inv_r, cb_r = cloud_layer_heights(rad_output,  seeds_rad)
+
+    p10 = plot(time, inv_b; label="z_inv",      ylabel="Height (m)", xlabel="Time (h)", title="Cloud Layer Heights")
+    plot!(p10, time, cb_b;  label="z_cb",       linestyle=:dash)
+    plot!(p10, time, inv_r; label="z_inv (rad)", linestyle=:dot)
+    plot!(p10, time, cb_r;  label="z_cb (rad)",  linestyle=:dashdot)
+
+    plot(p1, p2, p7, p6, p4, p5, p9, p10; layout=(2, 4), size=(1200, 600))
+end
+
+function plot_ensemble_field(field, ensemble_output, ref_grid=nothing;
+                            scale=1.0, show_ribbon=true, axis=:height, t_window=nothing, color=:auto, label="", key_filter=nothing, kwargs...)
+    all_keys = collect(keys(ensemble_output))
+    # filter by non-seed key prefix when keys are tuples
+    selected = key_filter === nothing ? all_keys :
+               filter(k -> k isa Tuple && k[1:end-1] == key_filter, all_keys)
+    # drop failed runs
+    selected = filter(k -> ensemble_output[k] !== nothing, selected)
+
+    sample = getfield(ensemble_output[first(selected)], field)
+    time   = ensemble_output[first(selected)].time ./ 3600
+
+    if ndims(sample) == 1
+        mat = hcat([getfield(ensemble_output[s], field) for s in selected]...)
+        mn  = vec(mean(mat, dims=2))
+        sd  = vec(std(mat,  dims=2))
+        rib = show_ribbon ? sd .* scale : nothing
+        plot!(time, mn .* scale; ribbon=rib, fillalpha=0.3, xlabel="Time (h)", label=label, color=color, kwargs...)
+    elseif axis == :time
+        mat = hcat([vec(mean(getfield(ensemble_output[s], field), dims=1)) for s in selected]...)
+        mn  = vec(mean(mat, dims=2))
+        sd  = vec(std(mat,  dims=2))
+        rib = show_ribbon ? sd .* scale : nothing
+        plot!(time, mn .* scale; ribbon=rib, fillalpha=0.3, xlabel="Time (h)", label=label, color=color, kwargs...)
+    else  # axis == :height
+        z_centers = ref_grid.centers_z
+        t_idx = t_window === nothing ? axes(sample, 2) :
+                findall(t -> t_window[1] <= time[t] <= t_window[2], axes(sample, 2))
+        mat = hcat([vec(mean(getfield(ensemble_output[s], field)[:, t_idx], dims=2)) for s in selected]...)
+        mn  = vec(mean(mat, dims=2))
+        sd  = vec(std(mat,  dims=2))
+        p = plot!(; ylabel="z (m)", kwargs...)
+        if show_ribbon
+            shade_x = vcat((mn .- sd) .* scale, reverse((mn .+ sd) .* scale))
+            shade_y = vcat(z_centers, reverse(z_centers))
+            plot!(p, shade_x, shade_y; seriestype=:shape, alpha=0.2, linewidth=0, color=color, label="")
+        end
+        plot!(p, mn .* scale, z_centers; color=color, label=label, kwargs...)
+        p
+    end
+end
+
 # function create_condensation_integrator(grid, drops, condensationsettings, coagsettings, spatialsettings,constants)
 #     nz = grid.nz
 #     lnr = log.(volume_to_radius.(drops.X))

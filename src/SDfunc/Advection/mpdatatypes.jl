@@ -1,4 +1,4 @@
-export BoundaryCondition, Periodic, NoFlux, Reservoir,
+export BoundaryCondition, Periodic, NoFlux, Reservoir, Extrapolated,
        limit, flux, mpdata_settings, mpdata_tmp, mpdata_fields, mpdata_mulitple_fields,
          mpdata_settings_1d, mpdata_tmp_1d, mpdata_fields_1d
 
@@ -7,12 +7,13 @@ abstract type BoundaryCondition end
 struct Periodic <: BoundaryCondition end
 struct NoFlux <: BoundaryCondition end
 struct Reservoir <: BoundaryCondition end
+struct Extrapolated <: BoundaryCondition end
 
 struct mpdata_settings
     n_corr::Int
     grid::Tuple{Int, Int}
-    horizontal_boundary_condition::Union{Periodic, NoFlux}
-    vertical_boundary_condition::Union{Periodic, NoFlux}
+    horizontal_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
+    vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
     nonoscillatory::Bool
     infinite_gauge::Bool
 
@@ -30,7 +31,7 @@ end
 struct mpdata_settings_1d
     n_corr::Int
     grid::Int
-    vertical_boundary_condition::Union{Periodic, NoFlux}
+    vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
     # topcell_boundary_condition::Union{Periodic, NoFlux, Reservoir}
     nonoscillatory::Bool
     infinite_gauge::Bool

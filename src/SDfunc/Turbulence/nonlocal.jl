@@ -384,16 +384,19 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
         l_z = l[z]
         tau   = Ct*l_z * sqrt(Ce / e_eff) * term
         sigma2 = (e_eff * FT(2/3))
-        dt_sub = dt/10
-        w_amp = sqrt((1 - exp(-2 * dt_sub / tau)) * sigma2)
+        noise_amp = sqrt(2*sigma2 / tau)
+        w_corr    = 1 - dt / (2*tau)
+        dt_sqrt   = sqrt(dt)
+        dt_32     = dt * dt_sqrt
 
-        for step in 1:10
-            droplets.w_prime[k] .*= exp(-dt_sub / tau)
-            droplets.w_prime[k] .+= w_amp .* randn(FT, length(k))
-            clamp!(droplets.w_prime[k], -2, 2)
-            droplets.z_loc[k] .+= droplets.w_prime[k] * dt_sub
-            droplets.cell_id[k] = clamp.(floor.(Int,droplets.z_loc[k]/ grid.dz) .+ 1, -1, nz)
-        end
+        n1 = randn(FT, length(k))
+        n2 = randn(FT, length(k))
+        w0 = copy(droplets.w_prime[k])
+
+        droplets.z_loc[k]   .+= w0 .* (dt * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
+        droplets.w_prime[k] .+= (-w0 .* (dt / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
+        clamp!(droplets.w_prime[k], -2, 2)
+        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
     end
     return
 end

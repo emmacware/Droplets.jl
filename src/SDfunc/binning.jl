@@ -78,11 +78,13 @@ function mass_density_lnr(droplets::droplet_attributes,coagsettings::coag_settin
 end
 
 function binning_func(droplets::droplet_attributes, t::FT,
-    runsettings::run_settings{FT},coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+    runsettings::run_settings{FT}, coagsettings::coag_settings{FT};
+    indices = eachindex(droplets.X)) where FT<:AbstractFloat
 
     weights = runsettings.binning_method(droplets,coagsettings)
     R = volume_to_radius.(droplets.X)
-    numdens = binning_1d(R,weights,runsettings)
+    idx = droplets.I[indices]
+    numdens = binning_1d(R[idx], weights[idx], runsettings)
 
     if t != 0 && runsettings.smooth == true
         numdens = smoothbins!(numdens,runsettings)
@@ -114,7 +116,10 @@ function binning_1d(r_values_unsorted::Vector{},weights_unsorted::Vector{},runse
 
     if runsettings.normalize_bins_dlnr == true
         numdens = numdens ./ diff(log.(bin_edges))
+    else
+        numdens = numdens ./ diff(bin_edges)
     end
+
     return numdens
 end
 
