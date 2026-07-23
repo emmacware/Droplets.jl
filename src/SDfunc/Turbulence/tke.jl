@@ -37,7 +37,7 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     bott_mixing_length!(l, grid, tke, constants)
 
     # calculate_Kh_Km!(turbscheme, K_h, K_m,K_e, l, N2,S2,SM,SH,GN,GH,grid, tke, constants)
-    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, constants)
+    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
 
     for k in 1:nz
@@ -81,7 +81,11 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     # implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
     # θ_my_bot!(θl_t,grid, constants) #
 
+
+    grid.states.qv .+= grid.states.ql_tmp
     implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    grid.states.qv .-= grid.states.ql_tmp
+
     implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux)
     implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux)
 
