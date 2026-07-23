@@ -339,7 +339,7 @@ end
     # ~0.5% supersaturated
     qv_init = FT(1.005) * esat(T_init) * FT(0.622) / P_init
     ρ_init  = ρ_ideal_gas(P_init, T_init, qv_init, cst)
-    θ_init  = theta_from_T(T_init, P_init, cst)
+    θ_init  = theta_from_T(T_init, P_init,qv_init, cst)
 
     state = scm_states{FT}(
         nz,
@@ -402,7 +402,7 @@ end
         nz,
         fill(P_init, nz), fill(P_init, nz + 1),
         fill(T_init, nz), fill(FT(0.0), nz),
-        fill(theta_from_T(T_init, P_init, cst), nz),
+        fill(theta_from_T(T_init, P_init,qv_sub, cst), nz),
         fill(qv_sub, nz),
         fill(ρ_ideal_gas(P_init, T_init, qv_sub, cst), nz),
         fill(FT(0.0), nz), fill(FT(0.0), nz),

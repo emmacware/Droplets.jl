@@ -5,6 +5,7 @@ using Droplets
 using OrdinaryDiffEq
 
 using Plots
+using StatsPlots
 # using ComponentArrays
 using JLD2
 using Interpolations
@@ -19,22 +20,22 @@ const FT = Float64
 
 # Numerical settings
 const Z_max = 1500.0 #m
-const dz = 5.0 #m
+const dz = 10.0 #m
 const nz = Int(Z_max/dz)
 const dt = 1.0 #s
 const dt_coag = 0.1
 const dt_cond = 0.1
-const Ns_per_grid = 64
+const Ns_per_grid = 60
 seed = 42
 Random.seed!(seed)
-const t_max = 3600*6#s
+const t_max = 3600*3#s
 const t_output = 60*6 #s
 
 
 
 #DyCOMS-II RF02 case specifications
-
-const P_surface = 101780.0 # Pa Ackerman et al., 2009
+12
+const P_surface = 101780.0 # Pa, Ackerman et al., 2009
 # From Wyant et al., 2007
 const inv_height = 795.0  # m
 const ρ_inv = 1.12 # kg/m^3, air density @ inversion height
@@ -58,8 +59,8 @@ n2 = 65 * ccm_to_cm # m^-3, number concentration of mode 2
 n0 = n1 + n2 # m^-3, total number concentration
 m1,σ1 = (0.011e-6), log(1.2) # mode 1
 m2,σ2 = (0.06e-6), log(1.7) # mode 2
-# dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) + σ2^2,σ2)], [n1/n0, n2/n0])
-dist = MixtureModel(LogNormal, [(log(m1), σ1), (log(m2), σ2)], [n1/n0, n2/n0])
+dist = MixtureModel(LogNormal, [(log(m1) + σ1^2,σ1),(log(m2) + σ2^2,σ2)], [n1/n0, n2/n0])
+# dist = MixtureModel(LogNormal, [(log(m1), σ1), (log(m2), σ2)], [n1/n0, n2/n0])
 
 # inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
 
@@ -77,7 +78,7 @@ mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_co
 
 tkesettings = tke_settings{FT}(u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v,
     LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux)
-    
+
 #Default dynamics are all on
 base_scm = (
     Δt                          = dt,
@@ -94,21 +95,29 @@ base_scm = (
 
 scmspinupsettings = scm_settings{FT}(; base_scm...,
 REM              = DynOFF(),
-settling         = DynON(),
+settling         = DynOFF(),
 spinupsaturation = DynON(),
 coalescence       = DynOFF(),
+# turbulent_droplet_diffusion_on = DynOFF(),
+
+
 )
 scmsettings = scm_settings{FT}(; base_scm...,
 REM              = DynOFF(),
 settling         = DynON(),
 spinupsaturation = DynOFF(),
 coalescence       = DynON(),
+turbulent_droplet_diffusion_on = DynON(),
+
+
 )
 scmradsettings = scm_settings{FT}(; base_scm...,
 REM              = DynON(),
 settling         = DynON(),
 spinupsaturation = DynOFF(),
 coalescence       = DynON(),
+turbulent_droplet_diffusion_on = DynON(),
+
 )
 diagnosticsettings = diagnostic_settings()
 
@@ -120,8 +129,13 @@ grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_en
     coagsettings,spatialsettings,condensationsettings,tkesettings,constants
     )
 
+radgrid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
+    nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
+    coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+    )
+
 inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
-grid.states.e[1:inv_idx] .= 0.1#1e-6
+grid.states.e[1:inv_idx] .= 0.01#1e-6
 
 CArad = raddata.CArad
 R_array = range(CArad.lookup_lw_cld.bounds[1], CArad.lookup_lw_cld.bounds[2],
@@ -135,60 +149,84 @@ end
 
 
 spinup_step = round(Int, scmsettings.spinup_time / dt)
+bins_output = Dict()
+ensemble_output = Dict()
+# To skip re-running, load a previous save instead:
+# ensemble_output, bins_output = load("ensemble_output.jld2", "ensemble_output", "bins_output")
+num_bins = 50
+radius_bins_edges = 10 .^ range(log10(1*1e-8), log10(1e2*1e-6), length=num_bins+1) 
+# radius_bins_edges = range(0.5*1e-6,100e-6, length=num_bins+1) 
 
-droplets_snapshots = Dict{Int, droplet_attributes}()
+runsettings = run_settings{FT}(num_bins=num_bins,radius_bins_edges=radius_bins_edges,normalize_bins_dlnr=false,binning_method=mass_density_lnr)
+seeds = 10
 
-for i in 1:spinup_step
-    if i*dt % 100 == 0
-        println("Timestep: ", i*dt)
-        droplets_snapshots[Int(div(i*dt,600))] = deepcopy(droplets)
+
+for num_seeds in 1:seeds
+    for n0_change in [n0,1.4e8,n0/2,2.7e8, n0*2]
+        for rad in [false, true]
+            coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0_change,Δt=dt_coag,kernel=hydrodynamic,hydrodynamic_collision_eff_func=true)
+            scmrunsettings = rad ? scmradsettings : scmsettings
+            
+            
+
+            if (rad, n0_change, num_seeds) in keys(ensemble_output)
+                continue
+            end
+            println("Running simulation with rad=", rad, " n0=", n0_change, " seed=", num_seeds)
+
+            droplets_snapshots = Vector{Any}(undef, Int(spatialsettings.t_max / 600))
+
+            Random.seed!(seed + num_seeds)
+
+            grid1, droplets1, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
+            nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
+            coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+            )
+            inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
+            grid.states.e[1:inv_idx] .= .01#1e-6
+            ensemble_output[rad,n0_change,num_seeds] = grid.output
+            bins_output[rad,n0_change,num_seeds] = droplets_snapshots
+            # try
+                for i in 1:spinup_step
+                    if i*dt % 600 == 0
+                        println("Timestep: ", i*dt)
+                        droplets_snapshots[Int(div(i*dt,600))] = deepcopy(droplets)
+                    end
+
+                    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
+                    coagdata,conddata,raddata,turbdata,
+                    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmspinupsettings,tkesettings,absliq_r_interp,i)
+
+                end
+
+
+                for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
+                    if i*dt % 600 == 0
+                        println("Timestep: ", i*dt)
+                        droplets_snapshots[Int(div(i*dt,600))] = deepcopy(droplets)
+                    end
+
+                    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
+                    coagdata,conddata,raddata,turbdata,
+                    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmrunsettings,tkesettings,absliq_r_interp,i)
+                end
+            # catch e
+            #     @warn "Simulation failed for rad=$(rad), n0=$(n0_change), seed=$(num_seeds) with error: $(e)"
+            #     ensemble_output[rad,n0_change,num_seeds] = nothing
+            #     bins_output[rad,n0_change,num_seeds] = nothing
+            #     continue
+            # end
+
+
+            ensemble_output[rad,n0_change,num_seeds] = grid.output
+            bins_output[rad,n0_change,num_seeds] = droplets_snapshots
+            jldsave("ensemble_output.jld2"; ensemble_output, bins_output)
+
+
+        end
     end
-
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-    coagdata,conddata,raddata,turbdata,
-    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmspinupsettings,tkesettings,absliq_r_interp,i)
-
 end
-
-for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
-    if i*dt % 100 == 0
-        println("Timestep: ", i*dt)
-        droplets_snapshots[Int(div(i*dt,600))] = deepcopy(droplets)
-    end
-
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-    coagdata,conddata,raddata,turbdata,
-    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
-end
-
-
-using StatsBase,StatsPlots
-num_bins = 100
-radius_bins_edges = 10 .^range(log10(1e-7), log10(1e-3), length=num_bins+1)
-runsettings = run_settings{FT}(num_bins=num_bins,radius_bins_edges=radius_bins_edges,binning_method=number_density,normalize_bins_dlnr=false)
-# # seeds = 1    
-# mids = (radius_bins_edges[1:end-1] .* radius_bins_edges[2:end]) .^ 0.5
-time_idx = 20
-x1 = droplets_snapshots[time_idx].grid_range[50][1]
-x2 = droplets_snapshots[time_idx].grid_range[85][2]
-range_dr = droplets_snapshots[time_idx].I[x1:x2]
-r_um = (volume_to_radius.(droplets_snapshots[time_idx].X[range_dr]))*1e6
-density(r_um, weights=Weights(droplets_snapshots[time_idx].ξ[range_dr]), bandwidth=0.1,normalize_weights=true,
-        xlims=(1,80), 
-#         # yscale=:log10,
-#         # xscale=:log10,
-        )
-using KernelDensity
-k = kde(r_um, weights=Weights(droplets_snapshots[time_idx].ξ[range_dr]), bandwidth=0.5)
-plot(k.x, max.(k.density, 1e-10), yscale=:log10)
-
 
 penv = plot_env_profiles(grid)
 # #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid),plot_title="REM: $(scmsettings.REM)")#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
-
-bins = binning_func(droplets_snapshots[time_idx], 1.0, runsettings, coagsettings, indices=x1:x2)
-mids = 0.5*(radius_bins_edges[1:end-1] + radius_bins_edges[2:end])*1e6
-plot(mids, max.(bins,1e-15), label="Binned DSD", yscale=:log10, xlims=(1,80))
-
-heatmap(grid.output.ql)

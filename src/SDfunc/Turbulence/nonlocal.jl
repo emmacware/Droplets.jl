@@ -366,47 +366,65 @@ end
 function turbulent_droplet_diffusion!(::DynOFF,l,droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT) where FT
 end
-function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
-    grid, tke::tke_settings{FT}, dt::FT) where FT
-    #edited from grabowski and abade 2018 to be just dependent on TKE
-    #also using gillespie solution for dw'
-    nz    = grid.nz
+# function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
+#     grid, tke::tke_settings{FT}, dt::FT) where FT
+#     #edited from grabowski and abade 2018 to be just dependent on TKE
+#     #also using gillespie solution for dw'
+#     nz    = grid.nz
+#     dz    = grid.dz
+
+#     Ct = FT(0.63)
+#     Ce = FT(0.89)
+#     n_sub  = 8  # substep the OU integration within this outer dt; e/l/tau stay fixed across substeps
+#     dt_sub = dt / n_sub
+#     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
+#     z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx - 1) * grid.dz)
+
+#     for z in 1:nz
+#         isempty(droplets.grid_range[z]) && continue
+#         k_all = droplets.I[droplets.grid_range[z]]
+
+#         r = volume_to_radius.(droplets.X[k_all])
+#         cloud_mask = r .< FT(40e-6)   # only cloud droplets < 40 μm
+#         k = k_all[cloud_mask]
+#         isempty(k) && continue
+
+#         zm = max(z - 1, 1); zp = min(z + 1, nz)
+#         e_eff = (grid.states.e[zm] + grid.states.e[z] + grid.states.e[zp]) / 3
+#         l_z   = (l[zm] + l[z] + l[zp]) / 3
+
+#         tau = Ct*l_z * sqrt(Ce / e_eff)
+
+#         sigma2    = e_eff * FT(2/3)
+#         noise_amp = sqrt(2*sigma2 / tau)
+#         w_corr    = 1 - dt_sub / (2*tau)
+#         dt_sqrt   = sqrt(dt_sub)
+#         dt_32     = dt_sub * dt_sqrt
+
+#         w0     = copy(droplets.w_prime[k])
+#         z_disp = zeros(FT, length(k))
+
+#         for _ in 1:n_sub
+#             n1 = randn(FT, length(k))
+#             n2 = randn(FT, length(k))
+
+#             dz_disp = w0 .* (dt_sub * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
+#             dw      = (-w0 .* (dt_sub / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
+
+#             z_disp .+= dz_disp
+#             w0       = w0 .+ dw
+#         end
+
+#         droplets.z_loc[k]   .+= z_disp
+#         droplets.z_loc[k]   .= min.(droplets.z_loc[k], z_inv)  # capped at the inversion: no crossing up
+#         droplets.w_prime[k]  .= w0
+
+#         droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
+#     end
+
     
-    Ct = FT(0.63)
-    Ce = FT(0.89)
-    # inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
-    inv_idx = findfirst(k -> grid.states.e[k] < tke.e_min, 1:grid.nz)
-    for z in 1:nz
-        isempty(droplets.grid_range[z]) && continue
-        k     = droplets.I[droplets.grid_range[z]]
-        e_eff = max(grid.states.e[z], tke.e_min)
-        # if e_z < tke.e_min
-        #     droplets.w_prime[k] .= 0
-        #     continue
-        # end
-        N2 = calculate_buoyancy_frequency(grid, z, constants)
-        term = 1
-        N2 > 0 && (term = 1 / (1 + 400 * N2))
-        # l_z = grid.dz#min(grid.dz, l[z])
-        l_z = l[z]
-        tau   = Ct*l_z * sqrt(Ce / e_eff) * term
-        sigma2 = (e_eff * FT(2/3))
-        noise_amp = sqrt(2*sigma2 / tau)
-        w_corr    = 1 - dt / (2*tau)
-        dt_sqrt   = sqrt(dt)
-        dt_32     = dt * dt_sqrt
-
-        n1 = randn(FT, length(k))
-        n2 = randn(FT, length(k))
-        w0 = copy(droplets.w_prime[k])
-
-        droplets.z_loc[k]   .+= w0 .* (dt * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
-        droplets.w_prime[k] .+= (-w0 .* (dt / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
-        clamp!(droplets.w_prime[k], -2, 2)
-        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
-    end
-    return
-end
+#     return
+# end
 
 # function turbulent_droplet_diffusion!(::DynON,K_h,droplets::droplet_attributes_1d{FT},
 #     grid, tke::tke_settings{FT}, dt::FT) where FT
@@ -427,32 +445,32 @@ end
 #     sort!(droplets.I, by = i -> droplets.cell_id[i])
 # end
 
-# function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
-#     grid, tke::tke_settings{FT}, dt::FT) where FT
-#     nz    = grid.nz
-#     dz    = grid.dz
-#     Ct = FT(0.63)
-#     Ce = FT(0.89)
-#     e = grid.states.e
-#     for z in 1:nz
-#         isempty(droplets.grid_range[z]) && continue
-#         k     = droplets.I[droplets.grid_range[z]]
-#         e_z   = max(e[z], tke.e_min)
-#         l_z   = dz
-#         tau   = Ct * l_z * sqrt(Ce / e_z)
-#         sigma2 = e_z * FT(2/3)
-#         # Thomson (1987) well-mixed correction: ½ ∂σ_w²/∂z prevents spurious
-#         # accumulation in low-TKE regions (e.g. above the inversion)
-#         e_lo  = max(z > 1  ? e[z-1] : e[z], tke.e_min)
-#         e_hi  = max(z < nz ? e[z+1] : e[z], tke.e_min)
-#         dsigma2_dz = FT(2/3) * (e_hi - e_lo) / (2 * dz)
-#         w_amp = sqrt((1 - exp(-2 * dt / tau)) * sigma2)
-#         droplets.w_prime[k] .*= exp(-dt / tau)
-#         droplets.w_prime[k] .+= FT(0.5) * dsigma2_dz * dt
-#         droplets.w_prime[k] .+= w_amp .* randn(FT, length(k))
-#     end
-#     return
-# end
+function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
+    grid, tke::tke_settings{FT}, dt::FT) where FT
+    nz    = grid.nz
+    dz    = grid.dz
+    Ct = FT(0.63)
+    Ce = FT(0.89)
+    e = grid.states.e
+    for z in 1:nz
+        isempty(droplets.grid_range[z]) && continue
+        k     = droplets.I[droplets.grid_range[z]]
+        e_z   = max(e[z], tke.e_min)
+        l_z   = dz
+        tau   = Ct * l_z * sqrt(Ce / e_z)
+        sigma2 = e_z * FT(2/3)
+        # Thomson (1987) well-mixed correction: ½ ∂σ_w²/∂z prevents spurious
+        # accumulation in low-TKE regions (e.g. above the inversion)
+        e_lo  = max(z > 1  ? e[z-1] : e[z], tke.e_min)
+        e_hi  = max(z < nz ? e[z+1] : e[z], tke.e_min)
+        dsigma2_dz = FT(2/3) * (e_hi - e_lo) / (2 * dz)
+        w_amp = sqrt((1 - exp(-2 * dt / tau)) * sigma2)
+        droplets.w_prime[k] .*= exp(-dt / tau)
+        droplets.w_prime[k] .+= FT(0.5) * dsigma2_dz * dt
+        droplets.w_prime[k] .+= w_amp .* randn(FT, length(k))
+    end
+    return
+end
 
 # function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
 #     grid, tke::tke_settings{FT}, dt::FT) where FT

@@ -35,6 +35,7 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     
     # deardorff_mixing_length!(l, grid, tke, constants)
     bott_mixing_length!(l, grid, tke, constants)
+    # edmfx_mixing_length!(l, grid, tke, constants)
 
     # calculate_Kh_Km!(turbscheme, K_h, K_m,K_e, l, N2,S2,SM,SH,GN,GH,grid, tke, constants)
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
@@ -53,7 +54,8 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     # turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
     turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
     # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt,e_prev)
-
+    # stochastic_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
+    # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
 end
 
 function turb_timestep!(::DynOFF,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
@@ -142,7 +144,7 @@ function bott_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constan
 
         end
         lf = tke.vk * z * l0 / (tke.vk * z + l0)
-        l[k] = max(lf, dz)  
+        l[k] = max(lf, dz)
     end
 end
 
@@ -201,7 +203,7 @@ function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, consta
         l[k] = max(min(l_W, l_TKE > 0 ? l_TKE : l_W, l_N), dz)
     end
 end
-    
+
 
 
 
@@ -216,17 +218,38 @@ function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT}
     # dry = tke.dry_buoyancy
     # Π = (grid.states.P[k] / constants.P0) ^ (constants.Rd / constants.Cp_air)
 
-    θl_k = θl(grid.states.P[k],grid.states.T_tmp[k],grid.states.ql_tmp[k],constants)
+    θl_k = θl(grid.states.P[k],grid.states.T_tmp[k],grid.states.ql_tmp[k],grid.states.qv[k],constants)
 
-    q      = sqrt(2 * max(grid.states.e[k], tke.e_min))
-    # N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
+
+    # no e_min floor here: with it, q (and hence K_h/K_m/K_e) could never reach zero even
+    # deep in the free troposphere where e has genuinely decayed away, leaving a permanent
+    # non-physical background diffusivity everywhere. Instead, treat e<=0 as "no turbulence
+    # here" directly -- l[k]^2/q^2 would divide by zero (or 0*Inf -> NaN if N2/S2 also
+    # vanish) if we let q hit exactly zero and fell through to the rest of the closure.
+    e_k = grid.states.e[k]
+    # if e_k <= 0
+    #     GH[k] = zero(FT); GM[k] = zero(FT); SH[k] = zero(FT); SM[k] = zero(FT)
+    #     K_h[k] = zero(FT); K_m[k] = zero(FT); K_e[k] = zero(FT)
+    #     returnf
+    # end
+
+    q      = sqrt(2 * e_k)
+    # 3-cell smoothed N2: the raw single-cell value is dominated by grid-scale noise
+    # (from cell-independent condensation sampling perturbing θ slightly, cell to cell),
+    # and in weakly-turbulent layers l²/q² can amplify that noise ~10,000x, flipping GH
+    # between its clamp bounds every other cell and swinging SH (hence K_h) by ~25-40x
+    # cell-to-cell even though the true underlying stratification is nearly uniform there
+    km = max(k - 1, 1); kp = min(k + 1, grid.nz)
+    N2  = (calculate_buoyancy_frequency(grid, km, constants, dry=false) +
+           calculate_buoyancy_frequency(grid, k,  constants, dry=false) +
+           calculate_buoyancy_frequency(grid, kp, constants, dry=false)) / 3
     # N2 = moist_buoyancy_frequency(grid, k, constants)
     S2  = S2_flow_deformation(grid, k, constants)
-    l2_2e = l[k]^2 / q^2 
+    l2_2e = l[k]^2 / q^2
 
-    # GH[k]  = - l2_2e * N2
+    GH[k]  = - l2_2e * N2
     # GH[k]  = -constants.gconst * l2_2e * dθldz_k / θl
-    GH[k] =  - constants.gconst * l2_2e / θl_k * bott1997term(grid,k,constants)
+    # GH[k] =  - constants.gconst * l2_2e / θl_k * bott1997term(grid,k,constants)
     GM[k]  = l2_2e * S2
 
     GH[k] = clamp(GH[k], tke.GH_lims[1], tke.GH_lims[2])
@@ -263,14 +286,27 @@ function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
     #     my25_stability_functions()
     # end
 
-    # # TKE source/sink: production explicit, dissipation semi-implicit
+    # CURRENT (buggy denominator): diss = ε [m²/s³], so dt*diss has units m²/s², not dimensionless.
     for k in 1:nz
-        de = (SM[k] * GM[k] + SH[k] * GH[k]) * (2 * grid.states.e[k])^(3/2) / l[k]  
-        diss = tke.my_diss * (2 * grid.states.e[k])^(3/2) / l[k]  
+        de   = (SM[k] * GM[k] + SH[k] * GH[k]) * (2 * grid.states.e[k])^(3/2) / l[k]
+        diss = tke.my_diss * (2 * grid.states.e[k])^(3/2) / l[k]
         grid.states.e[k] = (grid.states.e[k] + dt * (de)) / (1 + dt * diss)
     end
 
-    grid.states.e .= max.(grid.states.e, 0.0)
+    # grid.states.e .= min.(grid.states.e, 0.4)
+
+    # FIXED (correct semi-implicit): diss_rate = ε/e = 2q/(B1*l) [s⁻¹], so dt*diss_rate is dimensionless.
+    # Derivation: linearize ε^(n+1) ≈ (ε^n/e^n)*e^(n+1), solve → e = (e + dt*prod)/(1 + dt*diss_rate).
+    # Reference: MY82 dissipation formula ε=q³/(B1*l); semi-implicit form in Durran (1999) §2.4.
+    # for k in 1:nz
+    #     # q = sqrt(2 * max(grid.states.e[k], tke.e_min))
+    #     q         = sqrt(2 * grid.states.e[k])
+    #     prod      = (SM[k] * GM[k] + SH[k] * GH[k]) * q^3 / l[k]
+    #     diss_rate = tke.my_diss * 2 * q / l[k]   # s⁻¹ = ε/e
+    #     # grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), tke.e_min)
+    #     grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
+    # end
+    # grid.states.e .= max.(grid.states.e, tke.e_min)
 
     return nothing
 end
@@ -301,7 +337,7 @@ function bott1997term(grid, k, constants)
     qsat = saturation_specific_humidity(θ, grid.states.P[k],grid.states.qv[k], constants)
     S_env = sat(grid.states.qv[k], grid.states.P[k]) / esat(T)
 
-    α  = exp(0.6*(min(S_env*100,100)-100))
+    α  = ql > FT(1e-5) ? exp(0.6*(min(S_env*100,100)-100)) : FT(0)
     b1 = 1 + 0.61*qt_k - 1.61*ql
     a1 = (1 + constants.L^2 * qsat / (constants.Cp_air * constants.Rv * T^2))^(-1)
     a2 = a1 * constants.L * qsat / (constants.Rv * T * θ)

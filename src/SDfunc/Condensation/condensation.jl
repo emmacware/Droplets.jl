@@ -140,8 +140,9 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
     c      = FT(2) / (FK(T, constants) + FD(T, constants))
     S1     = Senv - one(FT)
     R2     = R * R
-    F0     = c * (S1 -A/R + b/R^3) 
-    
+    F0     = c * (S1 -A/R + b/R^3)
+    Rcrit  = b > 0 ? sqrt(FT(3) * b / A) : FT(Inf)  # radius of the Köhler-curve hump
+
     # bisect in r-space: g(r) = r² - R²_old - Δt·c·(S1 + (b - A·r²)/r³)
     # one sqrt for the non-trivial bracket bound; none inside the loop
     if F0 >= 0
@@ -157,18 +158,22 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
     hi2  = hi_r * hi_r;  hi3 = hi2 * hi_r
     g_hi = hi2 - R2 - timestep * c * (S1 - A / hi_r + b / (hi2 * hi_r))
     r_new = (lo_r + hi_r) * FT(0.5)
-    
+
 
     if g_lo * g_hi >= 0
         r_new = max(r_new, dry_r)
+        # near the dry radius the solute term dominates F0, so extrapolating it over the
+        # full timestep can overshoot Rcrit and land the bracket on the runaway branch
+        # instead of the stable haze root; if that happened, stop at Rcrit for this step
+        # R < Rcrit < r_new && (r_new = Rcrit)
         droplets.X[i] = FT(4π/3) * r_new^3
         return
-    end 
-    
+    end
+
     for _ in 1:iters
         r2 = (lo2 + hi2) * FT(0.5)
         # r    = sqrt(r2)
-        r3    = r2 ^ (3/2)  
+        r3    = r2 ^ (3/2)
         g_mid = r2 - R2 - timestep * c * (S1 + (b - A * r2) / r3)
         if g_lo * g_mid <= 0
             hi2 = r2;  g_hi = g_mid
@@ -180,6 +185,7 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
     r2 = (lo2 + hi2) * FT(0.5)
 
     r_new = max(sqrt(r2), dry_r)
+    # R < Rcrit < r_new && (r_new = Rcrit)
     droplets.X[i] = FT(4π/3) * r_new^3
     return
 end
@@ -233,8 +239,9 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     radcoeff = (fk/(constants.L *constants.ρl))/(fk+fd)
 
     rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
-    Fcond0   = c * (S1 + (b - A * R2) / (R2 * R)) 
+    Fcond0   = c * (S1 + (b - A * R2) / (R2 * R))
     F0 = Fcond0 + rad0
+    Rcrit  = b > 0 ? sqrt(FT(3) * b / A) : FT(Inf)  # radius of the Köhler-curve hump
 
     if F0 >= 0
         lo_r = max(dry_r, R)
@@ -253,6 +260,9 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     if g_lo * g_hi >= 0
         # r2_new = r_new * r_new
         r_new  = max(sqrt(r2_new), dry_r)
+        # see dXkappakohler_bisection(::DynOFF, ...): if the (possibly oversized) bracket
+        # pushed the result past Rcrit from below the haze branch, stop at Rcrit instead
+        # R < Rcrit < r_new && (r_new = Rcrit)
         X_new  = FT(4π/3) * r_new^3
 
         # F_cond = c * (S1 + (b - A * r_new*r_new) / (r_new * r_new * r_new))
@@ -278,8 +288,8 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         (hi2 - lo2) < 1e-10 * r2_new && break
         r2_new = (lo2 + hi2) * FT(0.5)
     end
-    
-    
+    r2_new = (lo2 + hi2) * FT(0.5)
+
     r_new  = sqrt(r2_new)
     
 
@@ -287,6 +297,7 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     # F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
 
     r_new  = max(r_new, dry_r)
+    # R < Rcrit < r_new && (r_new = Rcrit)
     r2_new = r_new * r_new
     X_new  = FT(4π/3) * r2_new*r_new
 
@@ -320,7 +331,7 @@ function drkohler_activated(R,T,Senv,constants,timestep)
     # S = Senv/esat(T)
     denom = (FK(T, constants)+FD(T, constants))
     dr = (Senv-1) ./(denom.*R)
-    return R + dr*timestep > 0 ? dr : -R/timestep
+    return dr#R + dr*timestep > 0 ? dr : -R/timestep
 end
 
 """
