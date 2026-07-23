@@ -26,7 +26,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false,topcellreservoir=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinite_gauge::Bool=false,topcellreservoir=false)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -39,6 +39,28 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic
         tmp.ϕ[end] = 0.0
         # tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
     end
+
+    ϕ .+= tmp.ϕ
+end
+
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gauge::Bool=false,topcellreservoir=false)
+    tmp.ϕ .= 0
+
+    nz = length(ϕ)
+    for k in 2:nz-1
+        kp,km = k+1,k-1
+        tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
+        tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+    end
+
+    ϕ_halo_low  = max(2*ϕ[1]   - ϕ[2],     0)
+    ϕ_halo_high = max(2*ϕ[end] - ϕ[end-1], 0)
+
+
+    tmp.ϕ[1] -= flux(ϕ[1],ϕ[2], tmp.GCz_step[2],infinite_gauge=infinite_gauge)
+    tmp.ϕ[1] += flux(ϕ_halo_low, ϕ[1], tmp.GCz_step[1],infinite_gauge=infinite_gauge)
+    tmp.ϕ[end] -= flux(ϕ[end],ϕ_halo_high, tmp.GCz_step[end],infinite_gauge=infinite_gauge)
+    tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
 
     ϕ .+= tmp.ϕ
 end
@@ -407,7 +429,7 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
     find_extrema!(ϕ_stage,tmp,vbc=vbc)
 
     tcr = vbc isa NoFlux
-    donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false, topcellreservoir=tcr)
+    donor_cell_pass!(ϕ_stage,tmp,vbc, infinite_gauge=false, topcellreservoir=tcr)
 
 
     for _ in 2:n_corr
@@ -417,13 +439,25 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
             find_extrema!(ϕ_stage,tmp,vbc=vbc)
         end
 
-        donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr)
+        donor_cell_pass!(ϕ_stage,tmp, vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr)
 
     end
 end
-function mpdata_scm!(::DynOFF,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+
+# Fixed thermodynamics (KiD): advect ρqv with fixed ρ, θ and ρ unchanged
+function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d, constants::Constants) where {FT<:AbstractFloat}
+    GCz = grid.wind.w * Δt ./ grid.dz
+    grid.states.qv .*= grid.states.ρ
+    mpdata_step!(grid.states.qv, GCz, tmp, settings)
+    mpdata_step!(grid.states.ρ, GCz, tmp, settings)
+    grid.states.qv ./= grid.states.ρ
+    ρ_calc_θ!(grid.states.ρ, grid.states.P, grid.states.θ, grid.states.qv, constants)
+    return
 end
-function mpdata_scm!(::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+
+function mpdata_scm!(::DynOFF,::Dynamic,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+end
+function mpdata_scm!(::DynON,::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 
     GCz = grid.wind.w * Δt ./ grid.dz
 
@@ -446,7 +480,6 @@ function mpdata_scm!(::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp
     # grid.states.e .= ρe ./ grid.states.ρ
     # grid.wind.u .= ρu ./ grid.states.ρ
     # grid.wind.v .= ρv ./ grid.states.ρ
-
     # #kind of naughty but we undo it within this function
     grid.states.qv .*= grid.states.ρ
     grid.states.θ .*= grid.states.ρ

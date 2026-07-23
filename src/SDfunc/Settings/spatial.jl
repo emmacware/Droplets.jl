@@ -43,7 +43,7 @@ struct DynOFF <: Dynamic end
 struct scm_settings{FT<:AbstractFloat, Thr, Sch,
         Turb<:Dynamic, Cond<:Dynamic, REM_T<:Dynamic, Mot<:Dynamic,
         SpinupSat<:Dynamic, Rad<:Dynamic, Coag<:Dynamic, Sett<:Dynamic,
-        Adv<:Dynamic, Rec<:Dynamic, TurbDiff<:Dynamic}
+        Adv<:Dynamic, Rec<:Dynamic, TopEsc<:Dynamic, ThermoFB<:Dynamic, TurbDiff<:Dynamic}
     init_random_seed::Int
     coag_threading::Thr
     scheme::Sch
@@ -61,6 +61,8 @@ struct scm_settings{FT<:AbstractFloat, Thr, Sch,
     settling::Sett
     advection::Adv
     recycling::Rec
+    top_escape::TopEsc
+    thermo_feedback::ThermoFB
     turbulent_droplet_diffusion_on::TurbDiff
 end
 
@@ -82,14 +84,17 @@ function scm_settings{FT}(;
         settling::Dynamic                 = DynON(),
         advection::Dynamic                = DynON(),
         recycling::Dynamic                = DynON(),
+        top_escape::Dynamic               = DynOFF(),
+        thermo_feedback::Dynamic          = DynON(),
         turbulent_droplet_diffusion_on::Dynamic = DynON(),
     ) where {FT<:AbstractFloat}
     scm_settings{FT, typeof(coag_threading), typeof(scheme),
         typeof(turbulence), typeof(condensation), typeof(REM), typeof(motion),
         typeof(spinupsaturation), typeof(radiation), typeof(coalescence),
         typeof(settling), typeof(advection), typeof(recycling),
-        typeof(turbulent_droplet_diffusion_on)}(
+        typeof(top_escape), typeof(thermo_feedback), typeof(turbulent_droplet_diffusion_on)}(
         init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, spinup_time,
         turbulence, condensation, REM, motion, spinupsaturation, radiation,
-        coalescence, settling, advection, recycling, turbulent_droplet_diffusion_on)
+        coalescence, settling, advection, recycling, top_escape, thermo_feedback,
+        turbulent_droplet_diffusion_on)
 end

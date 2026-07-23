@@ -29,7 +29,7 @@ M = 1e-16 #Mass of solute
 a = 3.3*10^(-7)/T #(m)
 m = 58.44 #molecular weight of NaCL
 b = 4.3 *2/m/1e6 #m^3 for NaCL
-denom = FK(T)+FD(T) #denominator for the Köhler equation
+denom = FK(T,constants_)+FD(T,constants_) #denominator for the Köhler equation
 
 #parameters for ODE problem
 pcondense = (a,b,S,M,denom)

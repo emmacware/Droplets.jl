@@ -142,12 +142,12 @@ struct radiation_data{FT<:AbstractFloat}
         layerdata = similar(zeros(laydim...), 4, nlay)
         Nz = grid.nz
         θ, qv, P, P_faces = grid.states.θ, grid.states.qv, grid.states.P,grid.states.P_faces
-        T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,constants)
+        T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,grid.states.qv,constants)
         T = grid.states.T_tmp
         Tsfc = 292.0
         T1 = 0.5*(T[1]+Tsfc)#2*T[1] - T[2] 
         P_extra = range(P_faces[end], 30000, 21)
-        T_extra = T_from_theta.(θ[end],P_extra, constants) 
+        T_extra = T_from_theta.(θ[end],P_extra,qv[end], constants) 
         layerdata[2,:] = [P; P_extra[2:2:end-1]]
         layerdata[3,:] = [T;T[end]; T_extra[4:2:end-1]]
         p_lev = reshape([P_faces; P_extra[3:2:end]], nlev, 1)
@@ -193,7 +193,7 @@ Base.broadcastable(x::radiation_clima_data_helper)= Ref(x)
 
 function fill_full_atmosphere(grid::scm_eulerian_arrays,as::AtmosphericState,constants::Constants,CArad::radiation_clima_data_helper)::Nothing
     Nz = grid.nz
-    T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,constants)
+    T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,grid.states.qv,constants)
     T = grid.states.T_tmp
     T1 = 0.5*(T[1]+292.0)# 2*T[1] - T[2]
     # T1 = 2*T[1] - T[2]
@@ -286,7 +286,7 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
 
     # grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
     # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
-    theta_from_T!(grid.states.θ, grid.states.T_tmp, grid.states.P, constants)
+    theta_from_T!(grid.states.θ, grid.states.T_tmp, grid.states.P,grid.states.qv, constants)
     ρ_ideal_gas!(grid.states.ρ, grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
 
     

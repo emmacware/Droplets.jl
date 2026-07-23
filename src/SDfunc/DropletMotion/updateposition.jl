@@ -15,7 +15,7 @@ function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynO
     @. droplets.z_loc += w_function(droplets.z_loc) * Δt
     # @. droplets.z_loc += droplets.w_prime * Δt
     @. droplets.z_loc -= terminal_v_X(droplets.X) * Δt
-    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max + spatialsettings.z_grid_height)
     # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
     @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
 
@@ -25,7 +25,7 @@ end
 function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynOFF,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
     @. droplets.z_loc += w_function(droplets.z_loc) * Δt
     # @. droplets.z_loc += droplets.w_prime * Δt
-    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max + spatialsettings.z_grid_height)
 
     # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
     @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
@@ -38,7 +38,7 @@ function update_droplet_positions!(motion::DynON,advection::DynOFF,settling::Dyn
     # droplets.z_loc .-= terminal_v_X.(droplets.X) .* Δt
     # @. droplets.z_loc += droplets.w_prime * Δt
     @. droplets.z_loc -= terminal_v_X(droplets.X) * Δt
-    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max-1e-5)
+    @. droplets.z_loc = clamp(droplets.z_loc,-1, spatialsettings.Z_max + spatialsettings.z_grid_height)
     # droplets.cell_id .= floor.(Int, droplets.z_loc ./ spatialsettings.z_grid_height) .+ 1
     @. droplets.cell_id = floor(Int, droplets.z_loc / spatialsettings.z_grid_height) + 1
 

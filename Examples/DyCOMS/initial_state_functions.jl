@@ -12,11 +12,11 @@ function dP_dz(P_z, ode_settings, z)
 
     g::FT = constants.gconst
     R_d::FT = constants.Rd
-    R_v::FT = constants.Rv
-    cp_d::FT = constants.Cp_air
-    cp_v::FT = constants.Cp_vapor #double check
+    # R_v::FT = constants.Rv
+    # cp_d::FT = constants.Cp_air
+    # cp_v::FT = constants.Cp_vapor #double check
 
-    T::FT = T_from_theta(θ_z,P_z,constants)
+    T::FT = T_from_theta(θ_z,P_z,q_vap,constants)
     T_virtual = T * (1 + 0.61 * q_vap)
     ρ::FT = P_z / (R_d * T_virtual)
 
@@ -25,7 +25,9 @@ end
 
 
 function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,init_dist,coagsettings,spatialsettings,condensationsettings,tkesettings,constants)
-    droplets = init_droplets_dycoms_scm(init_dist,coagsettings, spatialsettings)
+    z_centers = [(k - 0.5) * dz for k in 1:nz]
+    qv_profile = qt.(z_centers)
+    droplets = init_droplets_dycoms_scm(init_dist, coagsettings, spatialsettings, qv_profile)
     grid = create_scm_grids(nz, dz,droplets,spatial = spatialsettings,output=nothing)
 
     p = (constants, θl, qt)
@@ -42,7 +44,7 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
     # grid.states.ρ .= grid.states.P ./ (constants.Rd .* T_virtual.(grid.states.T, grid.states.qv))
     # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
     grid.states.ρ .= ρ_calc_θ.(grid.states.P,grid.states.θ,grid.states.qv,constants)
-    ρ_dry = grid.states.ρ ./ (1 .+ grid.states.qv)
+    ρ_dry = grid.states.ρ ./ (1 .+ mixing_ratio.(grid.states.qv))
 
     # for k in 1:nz
         
@@ -61,7 +63,7 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
         ρ_ratio = ρ_dry[k] / ρ_STP
         droplets.ξ[drop_idx] .= floor.(Int, droplets.ξ[drop_idx] .* ρ_ratio .+ 0.5)
 
-        T = T_from_theta(grid.states.θ[k], grid.states.P[k], constants)
+        T = T_from_theta(grid.states.θ[k], grid.states.P[k],grid.states.qv[k], constants)
         qv_k = grid.states.qv[k]
         P_k = grid.states.P[k]
         S_env = sat(qv_k,P_k)/esat(T)
@@ -83,42 +85,53 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
 end
 
 
-function init_droplets_dycoms_scm(dist,settings::coag_settings{FT},
-    spatial::spatial_settings{FT})where FT<:AbstractFloat
+function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
+    spatial::spatial_settings{FT}, qv_profile::AbstractVector) where FT<:AbstractFloat
 
     Ns = settings.Ns
     ΔV = settings.ΔV
     n0 = settings.n0
 
+    percentile_limit = [0.001, 0.999]
+    ξstart::Vector{Int} = fill(1, Ns)
+    z_loc = fill(FT(0.0), Ns)
+    rad = fill(FT(0.0), Ns)
+    cell_id = fill(1, Ns)
 
-
-    percentile_limit = [0.001, 0.999]  
-    Rmin = quantile(dist, percentile_limit[1])
-    Rmax = quantile(dist, percentile_limit[2])   
-    ξstart::Vector{Int} = fill(1, Ns) 
-    z_loc = fill(FT(0.0), Ns) #initialize all droplets at middle of domain
-    rad = fill(FT(0.0), Ns) #initialize as just aerosol volume.
-    cell_id = fill(1, Ns) #initialize as just aerosol volume.
-
-    # Rarray = range(Rmin, Rmax, length=Ns+1)
-    # cdf_values = cdf.(dist, Rarray)
-    # rad = (Rarray[2:end] .+ Rarray[1:end-1])./ 2 
-    # cdf_values = cdf_values[2:end] - cdf_values[1:end-1]
     nz = spatial.Nz
-    Ns_per_grid = Int(floor(Ns / nz))
+
+    # Allocate superdroplets proportionally to qv, only a thin layer above inversion (qt < 0.008)
+    # Top half of BL gets 3x the weight of the bottom half
+    weights = ifelse.(qv_profile .< FT(0.008), FT(0), qv_profile)
+    bl_top = something(findlast(!iszero, weights), 0)
+    mid = div(bl_top, 2)
+    weights[mid+1:bl_top] .*= 3
+    # seed a thin layer above the inversion (entrainment zone) so some aerosol exists
+    # there too, at the same weight as the sub-cloud-deck layer (pre-boost)
+    above_inv = (bl_top+1):min(bl_top+10, nz)
+    weights[above_inv] .= weights[1]
+    weights ./= sum(weights)
+    Ns_per_cell = floor.(Int, weights .* Ns)
+    remainder = Ns - sum(Ns_per_cell)
+    top_cells = sortperm(weights .* Ns .- Ns_per_cell, rev=true)[1:remainder]
+    Ns_per_cell[top_cells] .+= 1
+
+    offset = 0
     for k in 1:nz
-        drop_idx = (k-1)*Ns_per_grid+1 : min(k*Ns_per_grid, Ns)
-        
-        cdf_values = sort(rand(Uniform(),2*Ns_per_grid+1))
+        n_k = Ns_per_cell[k]
+        drop_idx = offset+1 : offset+n_k
+
+        cdf_values = sort(rand(Uniform(percentile_limit[1], percentile_limit[2]), 2*n_k + 1))
         rad[drop_idx] .= quantile.(dist, cdf_values[2:2:end-1])
         cdf_values = cdf_values[1:2:end]
         cdf_vals = cdf_values[2:end] - cdf_values[1:end-1]
 
         multiplicities = cdf_vals .* (n0 * ΔV)
-        ξstart[drop_idx] .= floor.(Int, multiplicities[1:length(drop_idx)] .+ 0.5)
-        z_loc[drop_idx] .= (k-1)*spatial.z_grid_height .+ spatial.z_grid_height.*rand(Ns_per_grid)
-                
+        ξstart[drop_idx] .= floor.(Int, multiplicities .+ 0.5)
+        z_loc[drop_idx] .= (k-1)*spatial.z_grid_height .+ spatial.z_grid_height .* rand(n_k)
         cell_id[drop_idx] .= k
+
+        offset += n_k
     end
 
     dry_r3 = rad.^3
@@ -140,9 +153,9 @@ end
 function plot_env_profiles(grid)
     compute_ql_at_cell!.(grid.states, 1:grid.nz,constants)
     ql = grid.states.ql_tmp
-    grid.states.T_tmp .= T_from_theta.(grid.states.θ, grid.states.P, constants)
+    grid.states.T_tmp .= T_from_theta.(grid.states.θ, grid.states.P,grid.states.qv, constants)
     p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", label="θ")
-    p1 = plot!(θl.(grid.states.P,grid.states.T_tmp,ql,constants),grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", label="θl")
+    p1 = plot!(θl.(grid.states.P,grid.states.T_tmp,grid.states.qv,ql,constants),grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", label="θl")
     p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", label="qv")
     p2 = plot!(ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="ql")
     p2 = plot!(grid.states.qv*1000 .+ ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="qt")
@@ -154,7 +167,7 @@ function plot_env_profiles(grid)
     p3 = plot(grid.states.P,grid.centers_z, ylabel="Height (m)", xlabel="Pressure (Pa)", title="P", legend=false)
     p4 = plot(grid.states.ρ,grid.centers_z, ylabel="Height (m)", xlabel="density (kg/m3)", title="ρ", label = "ρ")
     # p4 = vline!([ρ_inv], line=:dash, color=:red, label="ρ_inv")
-    T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,constants)
+    T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,grid.states.qv,constants)
     p5 = plot(grid.states.T_tmp,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
     p5 = plot!(T_virtual.(grid.states.T_tmp, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
     
@@ -164,7 +177,7 @@ function plot_env_profiles(grid)
     return envplot
 end
 
-function plot_output_timeseries(grid)
+function plot_output_timeseries(grid;tskips = 14)
     time = grid.output.time ./ 3600
     t_skips = Int(floor(length(time)/5))
     z_centers = grid.centers_z
@@ -184,7 +197,7 @@ function plot_output_timeseries(grid)
     p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)
     # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="z (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)
     
-    θl_z = θl.(grid.output.P[:,1:t_skips:end],T_from_theta.(grid.output.θ[:,1:t_skips:end],grid.output.P[:,1:t_skips:end],constants), grid.output.ql[:,1:t_skips:end], constants)
+    θl_z = θl.(grid.output.P[:,1:t_skips:end],T_from_theta.(grid.output.θ[:,1:t_skips:end],grid.output.P[:,1:t_skips:end],grid.output.qv[:,1:t_skips:end],constants), grid.output.ql[:,1:t_skips:end],grid.output.qv[:,1:t_skips:end], constants)
     p7 = plot(θl_z, z_centers, ylabel="z (m)", title="Liquid Water Potential Temperature", xlabel="θl", legend=false)
     p8 = plot(grid.output.ql[:,1:t_skips:end]*1000 .+ grid.output.qv[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="qt(g/kg)", title="qtot", legend=false)
     p9 = plot(grid.output.e[:,1:t_skips:end], z_centers, ylabel="z (m)", xlabel="TKE [m2/s2]", title="TKE", legend=false)
@@ -196,7 +209,7 @@ function plot_output_timeseries(grid)
     for i in 1:length(time)
         qt_profile = grid.output.ql[:,i] .+ grid.output.qv[:,i]
         inv_idx = findfirst(qt_profile .< 0.008) 
-        inv_height[i] = z_centers[inv_idx]
+        inv_height[i] = inv_idx == nothing ? NaN : z_centers[inv_idx]
         # cloud_lwc_profile = grid.output.cloud_LWC[:,i]
         # cloud_base_idx = findfirst(cloud_lwc_profile[5:end] .> 0.1/1000)
         # cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx+4]        
@@ -282,8 +295,9 @@ function plot_ensemble_timeseries(rad_output, base_output, ref_grid)
     function θl_profile_stats(output_dict, seeds)
         arr = cat([θl.(output_dict[s].P[:, t_idx],
                        T_from_theta.(output_dict[s].θ[:, t_idx],
-                                     output_dict[s].P[:, t_idx], constants),
-                       output_dict[s].ql[:, t_idx], constants)
+                                     output_dict[s].P[:, t_idx],
+                                     output_dict[s].qv[:, t_idx], constants),
+                       output_dict[s].ql[:, t_idx],output_dict[s].qv[:, t_idx], constants)
                    for s in seeds]..., dims=3)
         ([median(arr[z, i, :])         for z in axes(arr,1), i in axes(arr,2)],
          [quantile(arr[z, i, :], 0.25) for z in axes(arr,1), i in axes(arr,2)],

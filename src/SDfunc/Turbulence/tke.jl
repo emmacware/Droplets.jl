@@ -2,6 +2,8 @@ include("nonlocal.jl")
 export my25_stability_functions, diffuse_fields!
 export turb_timestep!, tke_update!, bott_mixing_length!
 export deardorff_mixing_length!
+export edmfx_mixing_length!
+export mynn_stability_functions
 
 
 
@@ -75,7 +77,6 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     surface_meridional_momentum_flux = - grid.wind.v[1]*tke.u_star^2 / spd
     theta_surf_flux = tke.SHF / (grid.states.ρ[1] * constants.Cp_air * (grid.states.P[1]/constants.P0)^(constants.Rd / constants.Cp_air))
 
-
     implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
     # implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
     # θ_my_bot!(θl_t,grid, constants) #
@@ -138,6 +139,62 @@ function bott_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constan
         end
         lf = tke.vk * z * l0 / (tke.vk * z + l0)
         l[k] = max(lf, dz)  
+    end
+end
+
+"""
+    edmfx_mixing_length!(l, grid, tke, constants)
+
+Alternative to `bott_mixing_length!`, adapted from ClimaAtmos's EDMF-X closure
+(`ClimaAtmos.jl/src/prognostic_equations/edmfx_closures.jl`, `mixing_length`;
+coefficients from Lopez-Gomez et al. 2020, https://doi.org/10.1029/2020MS002162).
+
+`bott_mixing_length!`'s asymptotic scale is `bott_α * z_inv` -- proportional to the
+*currently diagnosed* inversion height. That creates a destabilizing feedback: if the
+boundary layer starts to shrink, the mixing length shrinks with it, weakening the very
+mixing that would otherwise resist further shrinking. None of the three scales blended
+here reference a diagnosed BL-top height at all -- each is a purely local function of
+the cell's own shear, buoyancy, and TKE -- so this closure can't develop that feedback
+by construction.
+
+Simplifications relative to the ClimaAtmos source (single-column, no EDMF updraft/
+environment decomposition here):
+  - l_W: simplified to neutral von Kármán scaling (κz); the Businger/Gryanik
+    Monin-Obukhov stability correction was not ported.
+  - l_TKE: the production-dissipation balance omits the EDMF exchange term
+    (`ᶜtke_exch`), which has no counterpart outside EDMF's updraft/environment split.
+  - Turbulent Prandtl number fixed at 1 in the buoyancy-production term.
+  - Scales are combined with a hard minimum rather than ClimaAtmos's smooth minimum.
+  - Floored (not capped) at `dz`, matching this codebase's existing convention.
+"""
+function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constants) where FT<:AbstractFloat
+    nz = grid.nz
+    dz = grid.dz
+    vk = tke.vk
+
+    for k in 1:nz
+        z = grid.centers_z[k]
+        e = max(grid.states.e[k], zero(FT))
+
+        # l_W: near-surface (neutral von Kármán) scale
+        l_W = vk * z
+
+        # l_TKE: local production/dissipation balance, a_pd*l² = c_d*e^(3/2)
+        # (no tke_exch term -- that's an EDMF updraft/environment exchange concept
+        # with no single-column counterpart)
+        N2 = calculate_buoyancy_frequency(grid, k, constants, dry=false)
+        S2 = S2_flow_deformation(grid, k, constants)
+        sqrt_e = sqrt(e)
+        a_pd = tke.c_m * (S2 - N2) * sqrt_e   # Pr_t = 1 simplification
+        l_TKE = a_pd > eps(FT) ? sqrt(tke.c_d * e * sqrt_e / a_pd) : zero(FT)
+
+        # l_N: buoyancy (static-stability) limited scale, capped by wall distance
+        l_N = z
+        if N2 > eps(FT) && e > eps(FT)
+            l_N = min(sqrt(tke.c_b * e) / sqrt(N2), z)
+        end
+
+        l[k] = max(min(l_W, l_TKE > 0 ? l_TKE : l_W, l_N), dz)
     end
 end
     
@@ -224,9 +281,9 @@ function bott1997term(grid, k, constants)
     km  = max(k - 1, 1)
     dz_eff = (k == 1 || k == nz) ? dz : 2.0 * dz
 
-    θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],  constants)
-    θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp], constants)
-    θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km], constants)
+    θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
+    θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
+    θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
 
     dθldz_k = (θl_kp - θl_km) / dz_eff
     qt_k  = grid.states.qv[k]  + grid.states.ql_tmp[k]
@@ -237,7 +294,7 @@ function bott1997term(grid, k, constants)
     ql   = grid.states.ql_tmp[k]
     T    = grid.states.T_tmp[k]
     θ    = grid.states.θ[k]
-    qsat = saturation_specific_humidity(θ, grid.states.P[k], constants)
+    qsat = saturation_specific_humidity(θ, grid.states.P[k],grid.states.qv[k], constants)
     S_env = sat(grid.states.qv[k], grid.states.P[k]) / esat(T)
 
     α  = exp(0.6*(min(S_env*100,100)-100))
@@ -250,9 +307,10 @@ function bott1997term(grid, k, constants)
     return (b1 - b2*a2*α)*dθldz_k + (b3 + b2*a1*α)*dqtdz_k
 end
 
-function saturation_specific_humidity(θ, P, constants)
-    T = T_from_theta(θ, P, constants)
+function saturation_specific_humidity(θ, P,q_vap, constants)
+    T = T_from_theta(θ, P,q_vap, constants)
     es = esat(T) # saturation vapor pressure in Pa
-    qsat = constants.ϵ * es / (P - es) # saturation specific humidity
+    # qsat = constants.ϵ * es / (P - es) # saturation specific humidity
+    qsat = constants.ϵ*es/(P - (1-constants.ϵ)*es)
     return qsat
 end

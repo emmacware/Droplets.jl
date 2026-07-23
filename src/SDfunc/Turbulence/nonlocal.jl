@@ -1,7 +1,8 @@
 export S2_flow_deformation#, calculate_Ri, calculate_buoyancy_frequency,
 export calculate_buoyancy_frequency
+export implicit_diffuse!
 #moist_buoyancy_production,
-# implicit_diffuse!,# calculate_Pr, find_bl_height, apply_counter_gradient!
+# calculate_Pr, find_bl_height, apply_counter_gradient!
 export tke_settings#, AbstractTurbulenceScheme, ProgTKE, MellorYamada, SmagorinskyLilly, KNMIturb
 # export AbstractMixingLengthFunction, Deardorff, SL, Nonlocal, Blackadar, KNMI
 export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_exact!
@@ -34,6 +35,9 @@ struct tke_settings{FT<:AbstractFloat, GU, GV}
     bott_β::FT
     my_diss::FT
     GH_lims::Tuple{FT,FT}
+    c_m::FT  # EDMF-X TKE eddy-diffusivity coefficient, Lopez-Gomez et al. (2020) Table 1
+    c_d::FT  # EDMF-X TKE dissipation coefficient, Lopez-Gomez et al. (2020) Table 1
+    c_b::FT  # EDMF-X static-stability mixing-length coefficient (CLIMAParameters default)
 end
 
 function tke_settings{FT}(;
@@ -50,10 +54,13 @@ function tke_settings{FT}(;
         bott_β::FT              = FT(4.0),
         my_diss::FT             = FT(1/16.6),
         GH_lims::Tuple{FT,FT}   = (FT(-0.4), FT(0.0233)),
+        c_m::FT                 = FT(0.14),
+        c_d::FT                 = FT(0.22),
+        c_b::FT                 = FT(0.4),
     ) where {FT<:AbstractFloat}
     tke_settings{FT, typeof(geostrophic_u), typeof(geostrophic_v)}(
         e_min, u_star, SHF, LHF, geostrophic_u, geostrophic_v,
-        dry_buoyancy, c_n, vk, bott_α, bott_β, my_diss, GH_lims)
+        dry_buoyancy, c_n, vk, bott_α, bott_β, my_diss, GH_lims, c_m, c_d, c_b)
 end
 
 

@@ -19,21 +19,22 @@ const FT = Float64
 
 # Numerical settings
 const Z_max = 1500.0 #m
-const dz = 10.0 #m
+const dz = 5.0 #m
 const nz = Int(Z_max/dz)
-const dt = 1.0 #s
+const dt = 0.5 #s
 const dt_coag = 0.1
 const dt_cond = 0.1
-const Ns_per_grid = 128
-Random.seed!(42)
+const Ns_per_grid = 64
+seed = 42
+Random.seed!(seed)
 const t_max = 3600*6#s
-const t_output = 60*6 #s
+const t_output = 60.0*6 #s
 
 
 
 #DyCOMS-II RF02 case specifications
 
-const P_surface = 101780.0 # Pa, Ackerman et al., 2009
+const P_surface = 101780.0 # Pa Ackerman et al., 2009
 # From Wyant et al., 2007
 const inv_height = 795.0  # m
 const ρ_inv = 1.12 # kg/m^3, air density @ inversion height
@@ -44,6 +45,8 @@ const geostrophic_v(z)::FT = -9 + 5.6*z/1000        # m/s
 const prescribed_w(z)::FT = min(-D*z,0) # m/s
 θl_initial(z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
 qt_initial(z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
+θl_init_inv(inv_height,z) = z <= inv_height ? 288.3 : 295.0 + (z - inv_height)^(1/3) #boundary layer liquid water potential temperature
+qt_init_inv(inv_height,z) = z <= inv_height ? 9.45e-3 : 5e-3 - 3e-3(1-exp(-(z - inv_height)/500)) # q total
 const surface_latent_heat_flux = 93.0 # W/m^2
 const surface_sensible_heat_flux = 16.0 # W/m^2
 #Bimodal Aerosol Distribution, Ackerman et al., 2009
@@ -88,19 +91,6 @@ base_scm = (
     spinup_time                 = 3600.0,
     turbulent_droplet_diffusion_on = DynON(),
 )
-#Default dynamics are all on
-base_scm = (
-    Δt                          = dt,
-    turbulence                  = DynON(),
-    motion                      = DynON(),
-    advection                   = DynON(),
-    radiation                  = DynON(),
-    condensation                = DynON(),
-    n_cond                      = round(Int, dt / dt_cond),
-    n_coag                      = round(Int, dt / dt_coag),
-    spinup_time                 = 3600.0,
-    turbulent_droplet_diffusion_on = DynON(),
-)
 
 scmspinupsettings = scm_settings{FT}(; base_scm...,
 REM              = DynOFF(),
@@ -130,11 +120,6 @@ grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_en
     coagsettings,spatialsettings,condensationsettings,tkesettings,constants
     )
 
-radgrid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
-    nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,constants
-    )
-
 inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
 grid.states.e[1:inv_idx] .= 0.1#1e-6
 
@@ -150,48 +135,6 @@ end
 
 
 spinup_step = round(Int, scmsettings.spinup_time / dt)
-bins_output = Dict{Int, Any}()
-
-# ensemble_output = Dict{Int, Any}()
-
-# for num_seeds in 31:50
-#     bins = 
-
-#     Random.seed!(seed + num_seeds)
-
-#     grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
-#     nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-#     coagsettings,spatialsettings,condensationsettings,tkesettings,constants
-#     )
-#     inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
-#     grid.states.e[1:inv_idx] .= 0.1#1e-6
-
-#     for i in 1:spinup_step
-#         if i*dt % 600 == 0
-#             println("Timestep: ", i*dt)
-#             bins[:,i] = binning_func(droplets,run_settings.output_steps[i],run_settings,coag_settings)
-#         end
-    
-#         single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-#         coagdata,conddata,raddata,turbdata,
-#         diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmspinupsettings,tkesettings,absliq_r_interp,i)
-
-#     end
-
-#     for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
-#         if i*dt % 600 == 0
-#             println("Timestep: ", i)
-#             bins[:,i] = binning_func(droplets,run_settings.output_steps[i],run_settings,coag_settings)
-#         end
-    
-#         single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-#         coagdata,conddata,raddata,turbdata,
-#         diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
-#     end
-
-#     ensemble_output[num_seeds] = grid.output
-
-# end
 
 droplets_snapshots = Dict{Int, droplet_attributes}()
 
@@ -209,13 +152,13 @@ end
 
 for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
     if i*dt % 100 == 0
-        println("Timestep: ", i)
+        println("Timestep: ", i*dt)
         droplets_snapshots[Int(div(i*dt,600))] = deepcopy(droplets)
     end
 
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
     coagdata,conddata,raddata,turbdata,
-    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmradsettings,tkesettings,absliq_r_interp,i)
+    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
 end
 
 
@@ -225,19 +168,19 @@ radius_bins_edges = 10 .^range(log10(1e-7), log10(1e-3), length=num_bins+1)
 runsettings = run_settings{FT}(num_bins=num_bins,radius_bins_edges=radius_bins_edges,binning_method=number_density,normalize_bins_dlnr=false)
 # # seeds = 1    
 # mids = (radius_bins_edges[1:end-1] .* radius_bins_edges[2:end]) .^ 0.5
-time_idx = 24
-x1 = droplets_snapshots[time_idx].grid_range[60][1]
+time_idx = 20
+x1 = droplets_snapshots[time_idx].grid_range[50][1]
 x2 = droplets_snapshots[time_idx].grid_range[85][2]
 range_dr = droplets_snapshots[time_idx].I[x1:x2]
-r_um = volume_to_radius.(droplets_snapshots[time_idx].X[range_dr])*1e6
+r_um = (volume_to_radius.(droplets_snapshots[time_idx].X[range_dr]))*1e6
 density(r_um, weights=Weights(droplets_snapshots[time_idx].ξ[range_dr]), bandwidth=0.1,normalize_weights=true,
-        # xlims=(1,80), 
-        # yscale=:log10,
-        # xscale=:log10,
+        xlims=(1,80), 
+#         # yscale=:log10,
+#         # xscale=:log10,
         )
-# using KernelDensity
-# k = kde(log.(r_um), weights=Weights(droplets_snapshots[time_idx].ξ[range_dr]), bandwidth=0.1)
-# plot(k.x, max.(k.density, 1e-10), yscale=:log10)
+using KernelDensity
+k = kde(r_um, weights=Weights(droplets_snapshots[time_idx].ξ[range_dr]), bandwidth=0.5)
+plot(k.x, max.(k.density, 1e-10), yscale=:log10)
 
 
 penv = plot_env_profiles(grid)
@@ -246,8 +189,6 @@ ptime = plot!(plot_output_timeseries(grid),plot_title="REM: $(scmsettings.REM)")
 
 bins = binning_func(droplets_snapshots[time_idx], 1.0, runsettings, coagsettings, indices=x1:x2)
 mids = 0.5*(radius_bins_edges[1:end-1] + radius_bins_edges[2:end])*1e6
-plot(mids, max.(bins,1e-5), label="Binned DSD", yscale=:log10, xlims=(1,80))
+plot(mids, max.(bins,1e-15), label="Binned DSD", yscale=:log10, xlims=(1,80))
 
-
-#this one!!
-julia> histogram(r_um,weights=Weights(droppies[time_idx].ξ[range_dr]), bandwidth=0.1,normalize_weights=true,yscale=:log10,bins=50)
+heatmap(grid.output.ql)

@@ -10,7 +10,7 @@ export dM_dt
 export drkappakohler
 export condensation_rhs!, condensation_rhs_single_cell, condensation_rhs_single_droplet
 export calc_cond_rad_term, dXkappakohler_bisection
-export limitsat, condensation_time_step_spatial!
+export limitsat, condensation_time_step_spatial!, apply_thermo_feedback!
 ######################################################################
 # 
 
@@ -101,16 +101,16 @@ function drkohler(R, M, m, T, qv, P,constants, timestep)
     S = sat.(qv, P) ./ esat(T)
     denom = (FK(T, constants) + FD(T, constants))
     dr = (S - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
-    return R + dr * timestep > 0 ? dr : -R / timestep
+    return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function drkohler(R, M, m, T, Senv,constants, timestep)
     denom = (FK(T, constants) + FD(T, constants))
     dr = (Senv - 1 .- (akk(T) ./ R) .+ bkk.(m) .* M ./(R .^ 3)) ./(denom .* R)
-    return R + dr * timestep > 0 ? dr : -R / timestep
+    return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
+function drkappakohler(R,dry_r3,kappa,T,Senv,constants;rad_term=0.0)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
     fk = FK(T, constants)
@@ -125,7 +125,7 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     # dr += rad_term * fk / (constants.L*constants.ρl * denom) 
         
 
-    return R + dr * timestep > 0 ? dr : -R / timestep
+    return dr#R + dr * timestep > 0 ? dr : -R / timestep
 end
 
 function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
@@ -538,7 +538,7 @@ end
 function dX_droplets!(X,dry_r3, kappa, qv, T, P, constants,dt)
     # Calculate the change in droplet volume due to condensation
     R = volume_to_radius.(X)  # Convert volume to radius
-    dX = 4 * π * R^2 * drkappakohler(R,dry_r3,kappa,Senv,constants,timestep)
+    dX = 4 * π * R^2 * drkappakohler(R,dry_r3,kappa,Senv,constants)
     return dX
 end
 
@@ -593,9 +593,13 @@ end
 
 function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
+    if S_env >=1.0
+        error("S_env must be less than 1.0 for equilibrium radius calculation.")
+    end
     dry_r3 = droplets.dry_r3[drop_idx]
     dry_r = (dry_r3)^(1/3)
     Sm1 = S_env - 1.0
+    
 
     #use rcrit and do bisection
     a_term = akk(T)
@@ -619,7 +623,7 @@ function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; m
         else
             lo_r = r_guess;  g_lo = g_mid
         end
-        (hi_r - lo_r) < 1e-10 * r_guess && break
+        (hi_r - lo_r) < 1e-15 * r_guess && break
         r_guess = (lo_r + hi_r) * (0.5)
     end
     r_guess = (lo_r + hi_r) * (0.5)
@@ -670,6 +674,13 @@ end
 
 limitsat(::DynON, S) = min(S, 1.01)
 limitsat(::DynOFF, S) = S
+
+function apply_thermo_feedback!(::DynON, state, z, dqv, constants)
+    state.T_tmp[z] -= dqv * constants.L / constants.Cp_air
+    state.θ[z] = theta_from_T(state.T_tmp[z], state.P[z],state.qv[z], constants)
+    state.ρ[z] = ρ_ideal_gas(state.P[z], state.T_tmp[z], state.qv[z], constants)
+end
+apply_thermo_feedback!(::DynOFF, state, z, dqv, constants) = nothing
 function condensation_time_step_spatial!(::DynOFF,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
     condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
 end
@@ -688,8 +699,9 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
 
         ΔVdrop = zero(FT)
         for idrop in k
+            droplets.ξ[idrop] == 0 && continue
             X_before = droplets.X[idrop]
-            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 10)
+            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 50)
             ΔVdrop += (droplets.X[idrop] - X_before) * droplets.ξ[idrop]
         end
         # conddata.vol_change_helper[z] = ΔV
@@ -697,10 +709,8 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
         inv_vol = constants.ρl / (state.ρ[z] * spatialsettings.area_per_grid * spatialsettings.z_grid_height)
         dqv = -ΔVdrop * inv_vol#conddata.vol_change_helper[z] * inv_vol
         conddata.condensation_src[z] -= dqv
-        state.qv[z]    += dqv
-        state.T_tmp[z] -= dqv * constants.L / constants.Cp_air
-        state.θ[z] = theta_from_T(state.T_tmp[z], state.P[z], constants)
-        state.ρ[z] = ρ_ideal_gas(state.P[z], state.T_tmp[z], state.qv[z], constants)
+        state.qv[z] += dqv
+        apply_thermo_feedback!(scmsettings.thermo_feedback, state, z, dqv, constants)
 
         # inv_vol2 = constants.ρl / (state.ρ[z] * spatialsettings.area_per_grid * spatialsettings.z_grid_height)
         if scmsettings.REM == DynON()
