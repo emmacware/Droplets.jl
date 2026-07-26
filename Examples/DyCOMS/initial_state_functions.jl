@@ -192,7 +192,7 @@ function plot_output_timeseries(grid;tskips = 14)
     p4 = plot!(time, LWP_rain*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries", label="Rain")
     # LWP_aerosol = sum(grid.output.aerosol_LWC, dims=1)' .* grid.dz
     # p4 = plot!(time, LWP_aerosol*1000, xlabel="Time (h)", ylabel="LWP (g/m2)", title="LWP Timeseries",label="Aerosol")
-    p5 = plot(time, grid.output.surface_precipitation *3600 * 24 * 1000, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
+    p5 = plot(time, grid.output.surface_precipitation *3600 * 24, xlabel="Time (h)", ylabel="pr (mm/day)", title="Surface Precipitation", legend=false)
     # p6 = plot((grid.output.cloud_LWC./grid.output.ρ)[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="Cloud ql (g/kg)", title="Cloud Liquid (not rain)", legend=false)
     p6 = plot(grid.output.ql[:,1:t_skips:end]*1000, z_centers, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)
     # p6 = plot!(grid.output.rain_LWC[:,1:5:end]*1000, z_centers, ylabel="z (m)", xlabel="Rain LWC (g/kg)", title="Rain LWC", legend=false)

@@ -28,7 +28,7 @@ const dt_cond = 0.1
 const Ns_per_grid = 60
 seed = 42
 Random.seed!(seed)
-const t_max = 3600*3#s
+const t_max = 3600*6#s
 const t_output = 60*6 #s
 
 
@@ -178,12 +178,12 @@ for num_seeds in 1:seeds
 
             Random.seed!(seed + num_seeds)
 
-            grid1, droplets1, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
+            grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
             nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
             coagsettings,spatialsettings,condensationsettings,tkesettings,constants
             )
             inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
-            grid.states.e[1:inv_idx] .= .01#1e-6
+            grid.states.e[1:inv_idx] .= 0.01#1e-6
             ensemble_output[rad,n0_change,num_seeds] = grid.output
             bins_output[rad,n0_change,num_seeds] = droplets_snapshots
             # try
@@ -227,6 +227,17 @@ for num_seeds in 1:seeds
     end
 end
 
+for field in fieldnames(typeof(ensemble_output[false,n0,1]))
+    getfield(grid.output, field) .= getfield(ensemble_output[false,n0,1], field)
+end
+
 penv = plot_env_profiles(grid)
 # #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid),plot_title="REM: $(scmsettings.REM)")#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
+
+num = ensemble_output[(false, n0,1)].number * 1e-6/50
+heatmap(ifelse.(num .< 20, NaN, num))
+
+tCpR = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : mean(v) end, num, dims=1)
+#time series mean of only values above 20, N_cloud (threshold applied after run-averaging)
+plot(tCpR', label="No REM", color=:aquamarine4, linewidth=2)

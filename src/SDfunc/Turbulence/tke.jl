@@ -83,7 +83,6 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     # implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
     # θ_my_bot!(θl_t,grid, constants) #
 
-
     grid.states.qv .+= grid.states.ql_tmp
     implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
     grid.states.qv .-= grid.states.ql_tmp
@@ -220,36 +219,15 @@ function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT}
 
     θl_k = θl(grid.states.P[k],grid.states.T_tmp[k],grid.states.ql_tmp[k],grid.states.qv[k],constants)
 
-
-    # no e_min floor here: with it, q (and hence K_h/K_m/K_e) could never reach zero even
-    # deep in the free troposphere where e has genuinely decayed away, leaving a permanent
-    # non-physical background diffusivity everywhere. Instead, treat e<=0 as "no turbulence
-    # here" directly -- l[k]^2/q^2 would divide by zero (or 0*Inf -> NaN if N2/S2 also
-    # vanish) if we let q hit exactly zero and fell through to the rest of the closure.
-    e_k = grid.states.e[k]
-    # if e_k <= 0
-    #     GH[k] = zero(FT); GM[k] = zero(FT); SH[k] = zero(FT); SM[k] = zero(FT)
-    #     K_h[k] = zero(FT); K_m[k] = zero(FT); K_e[k] = zero(FT)
-    #     returnf
-    # end
-
-    q      = sqrt(2 * e_k)
-    # 3-cell smoothed N2: the raw single-cell value is dominated by grid-scale noise
-    # (from cell-independent condensation sampling perturbing θ slightly, cell to cell),
-    # and in weakly-turbulent layers l²/q² can amplify that noise ~10,000x, flipping GH
-    # between its clamp bounds every other cell and swinging SH (hence K_h) by ~25-40x
-    # cell-to-cell even though the true underlying stratification is nearly uniform there
-    km = max(k - 1, 1); kp = min(k + 1, grid.nz)
-    N2  = (calculate_buoyancy_frequency(grid, km, constants, dry=false) +
-           calculate_buoyancy_frequency(grid, k,  constants, dry=false) +
-           calculate_buoyancy_frequency(grid, kp, constants, dry=false)) / 3
+    q      = sqrt(2 * max(grid.states.e[k], tke.e_min))
+    N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
     # N2 = moist_buoyancy_frequency(grid, k, constants)
     S2  = S2_flow_deformation(grid, k, constants)
     l2_2e = l[k]^2 / q^2
 
-    GH[k]  = - l2_2e * N2
+    # GH[k]  = - l2_2e * N2
     # GH[k]  = -constants.gconst * l2_2e * dθldz_k / θl
-    # GH[k] =  - constants.gconst * l2_2e / θl_k * bott1997term(grid,k,constants)
+    GH[k] =  - constants.gconst * l2_2e / θl_k * bott1997term(grid,k,constants)
     GM[k]  = l2_2e * S2
 
     GH[k] = clamp(GH[k], tke.GH_lims[1], tke.GH_lims[2])
@@ -337,7 +315,8 @@ function bott1997term(grid, k, constants)
     qsat = saturation_specific_humidity(θ, grid.states.P[k],grid.states.qv[k], constants)
     S_env = sat(grid.states.qv[k], grid.states.P[k]) / esat(T)
 
-    α  = ql > FT(1e-5) ? exp(0.6*(min(S_env*100,100)-100)) : FT(0)
+    # α  = ql > FT(1e-5) ? exp(0.6*(min(S_env*100,100)-100)) : FT(0)
+    α  = exp(0.6*(min(S_env*100,100)-100))
     b1 = 1 + 0.61*qt_k - 1.61*ql
     a1 = (1 + constants.L^2 * qsat / (constants.Cp_air * constants.Rv * T^2))^(-1)
     a2 = a1 * constants.L * qsat / (constants.Rv * T * θ)
@@ -354,3 +333,4 @@ function saturation_specific_humidity(θ, P,q_vap, constants)
     qsat = constants.ϵ*es/(P - (1-constants.ϵ)*es)
     return qsat
 end
+

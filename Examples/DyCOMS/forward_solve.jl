@@ -50,9 +50,11 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
     qt = grid.states.qv .+ grid.states.ql_tmp
-    update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
+    fill_grid_ranges!(droplets)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
     grid.states.qv .= qt .- grid.states.ql_tmp
+    update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
+
     sort!(droplets.I, by = k -> droplets.z_loc[k])
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
     recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)

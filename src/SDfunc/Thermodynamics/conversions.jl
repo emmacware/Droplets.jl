@@ -1,7 +1,7 @@
 
 export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T#, calc_p
 export theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas, ρ_calc_θ,ρ_calc_θ!
-export compute_ql_at_cell!,θl
+export compute_ql_at_cell!,θl,θ_from_θl
 #_θ, θl
 export mixing_ratio, specific_humidity
 export theta_from_T!, ρ_ideal_gas!, T_from_theta!
@@ -51,8 +51,11 @@ end
 theta_from_T(T,P,q_vap,constants) = T .* (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 T_virtual(T,q_vap) = T .* (1 .+ 0.61 .* q_vap)
 
-θl(P,T,ql,q_vap,constants) = (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants)) #should the last cp be for liquid?
-# θl_θ(θ,ql,constants) = θ .- constants.L .*ql ./constants.Cp_air
+θl(P,T,ql,q_vap,constants) = (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants))
+
+# Inverse of θl: recover θ given θl and the (possibly newly-redistributed) liquid content.
+# θl = θ - Π⁻¹·L·ql/Cp_m, so θ = θl + Π⁻¹·L·ql/Cp_m.
+θ_from_θl(P,θl_val,ql,q_vap,constants) = θl_val .+ (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* constants.L .* ql ./ Cp_m.(q_vap, constants)
 ρ_ideal_gas(P,T,q_vap,constants) = P ./ (constants.Rd .* T_virtual(T,q_vap))
 @inline ρ_calc_θ(P, θ, q_vap, constants) = ρ_ideal_gas(P,T_from_theta(θ,P,q_vap,constants),q_vap,constants)
 

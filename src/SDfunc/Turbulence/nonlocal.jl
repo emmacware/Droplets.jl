@@ -366,65 +366,71 @@ end
 function turbulent_droplet_diffusion!(::DynOFF,l,droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT) where FT
 end
-# function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
-#     grid, tke::tke_settings{FT}, dt::FT) where FT
-#     #edited from grabowski and abade 2018 to be just dependent on TKE
-#     #also using gillespie solution for dw'
-#     nz    = grid.nz
-#     dz    = grid.dz
-
-#     Ct = FT(0.63)
-#     Ce = FT(0.89)
-#     n_sub  = 8  # substep the OU integration within this outer dt; e/l/tau stay fixed across substeps
-#     dt_sub = dt / n_sub
-#     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
-#     z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx - 1) * grid.dz)
-
-#     for z in 1:nz
-#         isempty(droplets.grid_range[z]) && continue
-#         k_all = droplets.I[droplets.grid_range[z]]
-
-#         r = volume_to_radius.(droplets.X[k_all])
-#         cloud_mask = r .< FT(40e-6)   # only cloud droplets < 40 μm
-#         k = k_all[cloud_mask]
-#         isempty(k) && continue
-
-#         zm = max(z - 1, 1); zp = min(z + 1, nz)
-#         e_eff = (grid.states.e[zm] + grid.states.e[z] + grid.states.e[zp]) / 3
-#         l_z   = (l[zm] + l[z] + l[zp]) / 3
-
-#         tau = Ct*l_z * sqrt(Ce / e_eff)
-
-#         sigma2    = e_eff * FT(2/3)
-#         noise_amp = sqrt(2*sigma2 / tau)
-#         w_corr    = 1 - dt_sub / (2*tau)
-#         dt_sqrt   = sqrt(dt_sub)
-#         dt_32     = dt_sub * dt_sqrt
-
-#         w0     = copy(droplets.w_prime[k])
-#         z_disp = zeros(FT, length(k))
-
-#         for _ in 1:n_sub
-#             n1 = randn(FT, length(k))
-#             n2 = randn(FT, length(k))
-
-#             dz_disp = w0 .* (dt_sub * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
-#             dw      = (-w0 .* (dt_sub / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
-
-#             z_disp .+= dz_disp
-#             w0       = w0 .+ dw
-#         end
-
-#         droplets.z_loc[k]   .+= z_disp
-#         droplets.z_loc[k]   .= min.(droplets.z_loc[k], z_inv)  # capped at the inversion: no crossing up
-#         droplets.w_prime[k]  .= w0
-
-#         droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
-#     end
-
+function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
+    grid, tke::tke_settings{FT}, dt::FT) where FT
+    #edited from grabowski and abade 2018 to be just dependent on TKE
+    #also using gillespie solution for dw'
+    nz    = grid.nz
+    dz    = grid.dz
     
-#     return
-# end
+    Ct = FT(0.63)
+    Ce = FT(0.89)
+    inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # grid.states.qv .+= grid.states.ql_tmp
+    # inv_idx = findfirst(k -> grid.states.e[k] < tke.e_min, 1:grid.nz)
+    z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx-1) * grid.dz)
+    for z in 1:inv_idx
+        isempty(droplets.grid_range[z]) && continue
+        k = droplets.I[droplets.grid_range[z]]
+
+        if !isnothing(inv_idx) && z >= inv_idx
+            droplets.w_prime[k] .= 0
+            continue
+        end
+        # zm = max(z - 1, 1)
+        # zp = min(z + 1, nz)
+
+        # e_eff = max(grid.states.e[z], tke.e_min)
+        e_eff = grid.states.e[z]
+        # e_eff = (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3)
+        N2 = calculate_buoyancy_frequency(grid, z, constants)
+        term = 1
+        # N2 > 0 && (term = 1 / (1 + 400 * N2))
+        l_z = l[z]
+        # l_z = (l[z] + l[zm] + l[zp]) / FT(3)
+        tau   = Ct*l_z * sqrt(Ce / e_eff) * term
+        sigma2 = (e_eff * FT(2/3))
+        noise_amp = sqrt(2*sigma2 / tau)
+        w_corr    = 1 - dt / (2*tau)
+        dt_sqrt   = sqrt(dt)
+        dt_32     = dt * dt_sqrt
+
+        n1 = randn(FT, length(k))
+        n2 = randn(FT, length(k))
+        w0 = copy(droplets.w_prime[k])
+
+        droplets.z_loc[k]   .+= w0 .* (dt * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
+        droplets.w_prime[k] .+= (-w0 .* (dt / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
+        clamp!(droplets.w_prime[k], -2, 2)
+
+        for ki in k
+            if droplets.z_loc[ki] > z_inv
+                droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
+                droplets.w_prime[ki] = -droplets.w_prime[ki]
+            elseif droplets.z_loc[ki] < 0
+                droplets.z_loc[ki] = -droplets.z_loc[ki]
+                droplets.w_prime[ki] = -droplets.w_prime[ki]
+            end
+        end
+
+        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
+    end
+
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # grid.states.qv .-= grid.states.ql_tmp
+    return
+end
 
 # function turbulent_droplet_diffusion!(::DynON,K_h,droplets::droplet_attributes_1d{FT},
 #     grid, tke::tke_settings{FT}, dt::FT) where FT
@@ -445,32 +451,32 @@ end
 #     sort!(droplets.I, by = i -> droplets.cell_id[i])
 # end
 
-function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
-    grid, tke::tke_settings{FT}, dt::FT) where FT
-    nz    = grid.nz
-    dz    = grid.dz
-    Ct = FT(0.63)
-    Ce = FT(0.89)
-    e = grid.states.e
-    for z in 1:nz
-        isempty(droplets.grid_range[z]) && continue
-        k     = droplets.I[droplets.grid_range[z]]
-        e_z   = max(e[z], tke.e_min)
-        l_z   = dz
-        tau   = Ct * l_z * sqrt(Ce / e_z)
-        sigma2 = e_z * FT(2/3)
-        # Thomson (1987) well-mixed correction: ½ ∂σ_w²/∂z prevents spurious
-        # accumulation in low-TKE regions (e.g. above the inversion)
-        e_lo  = max(z > 1  ? e[z-1] : e[z], tke.e_min)
-        e_hi  = max(z < nz ? e[z+1] : e[z], tke.e_min)
-        dsigma2_dz = FT(2/3) * (e_hi - e_lo) / (2 * dz)
-        w_amp = sqrt((1 - exp(-2 * dt / tau)) * sigma2)
-        droplets.w_prime[k] .*= exp(-dt / tau)
-        droplets.w_prime[k] .+= FT(0.5) * dsigma2_dz * dt
-        droplets.w_prime[k] .+= w_amp .* randn(FT, length(k))
-    end
-    return
-end
+# function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
+#     grid, tke::tke_settings{FT}, dt::FT) where FT
+#     nz    = grid.nz
+#     dz    = grid.dz
+#     Ct = FT(0.63)
+#     Ce = FT(0.89)
+#     e = grid.states.e
+#     for z in 1:nz
+#         isempty(droplets.grid_range[z]) && continue
+#         k     = droplets.I[droplets.grid_range[z]]
+#         e_z   = max(e[z], tke.e_min)
+#         l_z   = dz
+#         tau   = Ct * l_z * sqrt(Ce / e_z)
+#         sigma2 = e_z * FT(2/3)
+#         # Thomson (1987) well-mixed correction: ½ ∂σ_w²/∂z prevents spurious
+#         # accumulation in low-TKE regions (e.g. above the inversion)
+#         e_lo  = max(z > 1  ? e[z-1] : e[z], tke.e_min)
+#         e_hi  = max(z < nz ? e[z+1] : e[z], tke.e_min)
+#         dsigma2_dz = FT(2/3) * (e_hi - e_lo) / (2 * dz)
+#         w_amp = sqrt((1 - exp(-2 * dt / tau)) * sigma2)
+#         droplets.w_prime[k] .*= exp(-dt / tau)
+#         droplets.w_prime[k] .+= FT(0.5) * dsigma2_dz * dt
+#         droplets.w_prime[k] .+= w_amp .* randn(FT, length(k))
+#     end
+#     return
+# end
 
 # function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{FT},
 #     grid, tke::tke_settings{FT}, dt::FT) where FT
@@ -580,3 +586,140 @@ end
 
 #     return
 # end
+
+function stochastic_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}, K_centers::Vector{FT}, dt::FT, dz::FT, nz::Int) where FT
+    # discrete 1D Monte Carlo analogue of Eulerian K-diffusion: each superdroplet (its full
+    # multiplicity travels with it -- no splitting) jumps a whole cell up/down with a
+    # probability set by the flux at that cell face, using the SAME face-averaged K
+    # implicit_diffuse! uses -- so in the ensemble-mean limit the two should agree exactly,
+    # making this a check on the comparison methodology itself, independent of the OU scheme
+    #
+    # qv handling: same qt-conservation trick as tdroptests! and production -- see its
+    # comment for why.
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # qt = grid.states.qv .+ grid.states.ql_tmp
+
+    K_face = zeros(FT, nz + 1)
+    for k in 2:nz
+        K_face[k] = FT(0.5) * (K_centers[k-1] + K_centers[k])
+    end
+    K_face[1]    = 0  # no-flux bottom, matching implicit_diffuse!
+    K_face[nz+1] = 0  # no-flux top, matching implicit_diffuse!
+
+    for z in 1:nz
+        isempty(droplets.grid_range[z]) && continue
+        k_all = droplets.I[droplets.grid_range[z]]
+
+        r = volume_to_radius.(droplets.X[k_all])
+        cloud_mask = r .< FT(40e-6)   # only cloud droplets < 40 μm, matching tdroptests!
+        k = k_all[cloud_mask]
+        isempty(k) && continue
+
+        # probability of crossing the upper/lower face this step, driven by the flux there
+        p_up   = K_face[z+1] * dt / dz^2
+        p_down = K_face[z]   * dt / dz^2
+        p_tot  = p_up + p_down
+        if p_tot > 1
+            # CFL-like violation for this dt/dz/K -- rescale rather than silently
+            # misrepresenting the flux (shouldn't trigger for the profiles/dt used here)
+            p_up   /= p_tot
+            p_down /= p_tot
+        end
+
+        for ki in k
+            u = rand(FT)
+            if u < p_down && z > 1
+                droplets.cell_id[ki] = z - 1
+                droplets.z_loc[ki]   = (z - FT(1.5)) * dz
+            elseif u < p_down + p_up && z < nz
+                droplets.cell_id[ki] = z + 1
+                droplets.z_loc[ki]   = (z + FT(0.5)) * dz
+            end
+            # else: stays put, nothing to change
+        end
+    end
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # grid.states.qv .= qt .- grid.states.ql_tmp
+    return nothing
+end
+
+function partmc_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}, K_centers::Vector{FT}, dt::FT, dz::FT, nz::Int) where FT
+    # Riemer/WRF-PartMC-style Monte Carlo diffusion (their eq 12-16): the net, gradient-
+    # driven, upwind flux at each face sets a per-particle crossing probability f = F̄/N_i,
+    # applied there to every one of the N_i (real, unweighted) droplets in the donor cell --
+    # every individual droplet gets the same chance of crossing regardless of its size,
+    # matching tdroptests!/stochastic_jump_diffusion! and the physical picture (turbulent
+    # eddies displace droplets without preference for their mass).
+    #
+    # N_i is real droplet count (Σξ), not ql -- weighting the flux itself by ql would make
+    # bigger droplets more likely to be picked, which is exactly what we don't want here.
+    # Generalized to superdroplets: each SD still moves as a whole block (no splitting),
+    # with its own chance of being the one selected set to f * ξ_j/N_i -- its share of the
+    # donor cell's total real-droplet count. NOTE: unlike a true per-particle Binomial
+    # split, this is only unbiased in expectation when all SDs in a cell carry equal ξ; it
+    # over-weights larger-ξ SDs otherwise (expected crossings = f*Σξ_j²/N_i, not f*N_i)
+    # since a whole SD's ξ moves together on a single draw.
+    #
+    # qv handling: same qt-conservation trick as tdroptests! and production -- see its
+    # comment for why.
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # qt = grid.states.qv .+ grid.states.ql_tmp
+
+    K_face = zeros(FT, nz + 1)
+    for k in 2:nz
+        K_face[k] = FT(0.5) * (K_centers[k-1] + K_centers[k])
+    end
+    K_face[1] = 0; K_face[nz+1] = 0  # no-flux top/bottom, matching implicit_diffuse!
+
+    # real-droplet count (Σξ) per cell and the cloud-droplet candidate list, same mask
+    # used everywhere else in this comparison
+    Ncell  = zeros(FT, nz)
+    kcloud = Vector{Vector{Int}}(undef, nz)
+    for z in 1:nz
+        if isempty(droplets.grid_range[z])
+            kcloud[z] = Int[]
+            continue
+        end
+        k_all = droplets.I[droplets.grid_range[z]]
+        r  = volume_to_radius.(droplets.X[k_all])
+        kc = k_all[r .< FT(40e-6)]
+        kcloud[z] = kc
+        Ncell[z]  = isempty(kc) ? zero(FT) : FT(sum(droplets.ξ[kc]))
+    end
+
+    # net expected crossings at each interior face; Fbar[z+1] is the face between cell
+    # z and z+1, positive meaning net flow upward (from z into z+1)
+    Fbar = zeros(FT, nz + 1)
+    for z in 1:nz-1
+        Fbar[z+1] = K_face[z+1] * dt / dz^2 * (Ncell[z] - Ncell[z+1])
+    end
+
+    for z in 1:nz
+        isempty(kcloud[z]) && continue
+
+        # cell z is upwind donor across its upper face iff Fbar there is positive;
+        # donor across its lower face iff Fbar there is negative (net flow down out of z)
+        p_up   = (Fbar[z+1] > 0 && Ncell[z] > 0) ? min(Fbar[z+1] / Ncell[z], one(FT)) : zero(FT)
+        p_down = (z > 1 && Fbar[z] < 0 && Ncell[z] > 0) ? min(-Fbar[z] / Ncell[z], one(FT)) : zero(FT)
+        if p_up + p_down > 1
+            p_up   /= (p_up + p_down)
+            p_down /= (p_up + p_down)
+        end
+
+        for ki in kcloud[z]
+            share = droplets.ξ[ki] / Ncell[z]
+            u = rand(FT)
+            if u < p_down * share && z > 1
+                droplets.cell_id[ki] = z - 1
+                droplets.z_loc[ki]   = (z - FT(1.5)) * dz
+            elseif u < p_down * share + p_up * share && z < nz
+                droplets.cell_id[ki] = z + 1
+                droplets.z_loc[ki]   = (z + FT(0.5)) * dz
+            end
+            # else: stays put, nothing to change
+        end
+    end
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # grid.states.qv .= qt .- grid.states.ql_tmp
+    return nothing
+end
