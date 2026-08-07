@@ -52,7 +52,6 @@ theta_from_T(T,P,q_vap,constants) = T .* (constants.P0 ./ P).^(R_m(q_vap, consta
 T_virtual(T,q_vap) = T .* (1 .+ 0.61 .* q_vap)
 
 θl(P,T,ql,q_vap,constants) = (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants))
-
 # Inverse of θl: recover θ given θl and the (possibly newly-redistributed) liquid content.
 # θl = θ - Π⁻¹·L·ql/Cp_m, so θ = θl + Π⁻¹·L·ql/Cp_m.
 θ_from_θl(P,θl_val,ql,q_vap,constants) = θl_val .+ (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* constants.L .* ql ./ Cp_m.(q_vap, constants)
@@ -85,8 +84,8 @@ end
 @inline mixing_ratio(q_vap) = q_vap / (1 - q_vap)
 @inline specific_humidity(r) = r / (1 + r)
 
-@inline R_m(q_vap, constants) = constants.Rd * (1 + mixing_ratio(q_vap) / constants.ϵ) / (1 + mixing_ratio(q_vap))
-@inline Cp_m(q_vap, constants) = (constants.Cp_air + mixing_ratio(q_vap) * constants.Cp_vapor) / (1 + mixing_ratio(q_vap))
+@inline R_m(q_vap, constants) = constants.Rd #* (1 + mixing_ratio(q_vap) / constants.ϵ) / (1 + mixing_ratio(q_vap))
+@inline Cp_m(q_vap, constants) = constants.Cp_air #+ mixing_ratio(q_vap) * constants.Cp_vapor) / (1 + mixing_ratio(q_vap))
 
 @inline T_from_theta(θ,P,q_vap,constants) = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 T_from_theta!(T, θ, P, q_vap,constants) = @. T = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))

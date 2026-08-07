@@ -53,7 +53,7 @@ function tke_settings{FT}(;
         bott_α::FT              = FT(0.05),
         bott_β::FT              = FT(4.0),
         my_diss::FT             = FT(1/16.6),
-        GH_lims::Tuple{FT,FT}   = (FT(-0.4), FT(0.0233)),
+        GH_lims::Tuple{FT,FT}   = (FT(-0.4), FT(0.03)),
         c_m::FT                 = FT(0.14),
         c_d::FT                 = FT(0.22),
         c_b::FT                 = FT(0.4),
@@ -388,13 +388,13 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
             droplets.w_prime[k] .= 0
             continue
         end
-        # zm = max(z - 1, 1)
-        # zp = min(z + 1, nz)
+        zm = max(z - 1, 1)
+        zp = min(z + 1, nz)
 
         # e_eff = max(grid.states.e[z], tke.e_min)
-        e_eff = grid.states.e[z]
-        # e_eff = (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3)
-        N2 = calculate_buoyancy_frequency(grid, z, constants)
+        # e_eff = grid.states.e[z]
+        e_eff = (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3)
+        # N2 = calculate_buoyancy_frequency(grid, z, constants)
         term = 1
         # N2 > 0 && (term = 1 / (1 + 400 * N2))
         l_z = l[z]
@@ -412,14 +412,14 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
 
         droplets.z_loc[k]   .+= w0 .* (dt * w_corr) .+ noise_amp .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
         droplets.w_prime[k] .+= (-w0 .* (dt / tau) .+ noise_amp .* n1 .* dt_sqrt) .* w_corr
-        clamp!(droplets.w_prime[k], -2, 2)
+        # clamp!(droplets.w_prime[k], -2, 2)
 
         for ki in k
             if droplets.z_loc[ki] > z_inv
                 droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
                 droplets.w_prime[ki] = -droplets.w_prime[ki]
             elseif droplets.z_loc[ki] < 0
-                droplets.z_loc[ki] = -droplets.z_loc[ki]
+                droplets.z_loc[ki] = rand()* dz
                 droplets.w_prime[ki] = -droplets.w_prime[ki]
             end
         end
@@ -630,10 +630,10 @@ function stochastic_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d
             u = rand(FT)
             if u < p_down && z > 1
                 droplets.cell_id[ki] = z - 1
-                droplets.z_loc[ki]   = (z - FT(1.5)) * dz
+                droplets.z_loc[ki]   -=dz# (z - FT(1.5)) * dz
             elseif u < p_down + p_up && z < nz
                 droplets.cell_id[ki] = z + 1
-                droplets.z_loc[ki]   = (z + FT(0.5)) * dz
+                droplets.z_loc[ki]   += dz# (z + FT(0.5)) * dz
             end
             # else: stays put, nothing to change
         end
@@ -711,10 +711,10 @@ function partmc_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}
             u = rand(FT)
             if u < p_down * share && z > 1
                 droplets.cell_id[ki] = z - 1
-                droplets.z_loc[ki]   = (z - FT(1.5)) * dz
+                droplets.z_loc[ki]   -=dz# (z - FT(1.5)) * dz
             elseif u < p_down * share + p_up * share && z < nz
                 droplets.cell_id[ki] = z + 1
-                droplets.z_loc[ki]   = (z + FT(0.5)) * dz
+                droplets.z_loc[ki]   += dz#(z + FT(0.5)) * dz
             end
             # else: stays put, nothing to change
         end

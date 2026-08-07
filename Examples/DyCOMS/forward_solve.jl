@@ -46,13 +46,15 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
 
     # Environmental advection
-    mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
     turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
     qt = grid.states.qv .+ grid.states.ql_tmp
+    θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     fill_grid_ranges!(droplets)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
     grid.states.qv .= qt .- grid.states.ql_tmp
+    grid.states.θ .= θ_from_θl.(grid.states.P, θ_l, grid.states.ql_tmp, grid.states.qv, constants)
+    mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
     update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
 
     sort!(droplets.I, by = k -> droplets.z_loc[k])
@@ -157,7 +159,7 @@ function fill_grid_ranges!(droplets)
     end
 end
 
-function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 100)
+function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 200)
     FT = eltype(droplets.X)
     fill_grid_ranges!(droplets)  # ensure ranges are current
     nz = length(droplets.grid_range)

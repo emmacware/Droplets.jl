@@ -32,18 +32,23 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     K_e .= 0
     
     e_prev = grid.states.e .+ 0
-    
+
+    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
+    compute_ql_at_cell!.(grid.states, 1:nz,constants)
+
     # deardorff_mixing_length!(l, grid, tke, constants)
     bott_mixing_length!(l, grid, tke, constants)
     # edmfx_mixing_length!(l, grid, tke, constants)
 
     # calculate_Kh_Km!(turbscheme, K_h, K_m,K_e, l, N2,S2,SM,SH,GN,GH,grid, tke, constants)
-    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
-    compute_ql_at_cell!.(grid.states, 1:nz,constants)
 
     for k in 1:nz
         my25_stability_functions(l,K_h,K_m,K_e,GH,GM,SM,SH, k,tke,grid,constants)
     end
+    turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
+    # stochastic_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
+    # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
+
 
     diffuse_fields!(grid, tke, K_h,K_m,K_e,constants, dt,turbdata)
 
@@ -52,9 +57,7 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
 
 
     # turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
-    turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
     # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt,e_prev)
-    # stochastic_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
     # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
 end
 
@@ -79,13 +82,19 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     surface_meridional_momentum_flux = - grid.wind.v[1]*tke.u_star^2 / spd
     theta_surf_flux = tke.SHF / (grid.states.ρ[1] * constants.Cp_air * (grid.states.P[1]/constants.P0)^(constants.Rd / constants.Cp_air))
 
+    T_from_theta!(grid.states.T_tmp, grid.states.θ, grid.states.P, grid.states.qv,constants) 
+    grid.states.θ .= θl.(grid.states.P,grid.states.T_tmp,grid.states.ql_tmp,grid.states.qv,constants)
     implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
-    # implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
-    # θ_my_bot!(θl_t,grid, constants) #
+    grid.states.θ .= θ_from_θl.(grid.states.P,grid.states.θ,grid.states.ql_tmp,grid.states.qv,constants)
+    T_from_theta!(grid.states.T_tmp, grid.states.θ, grid.states.P, grid.states.qv,constants) 
+
+
 
     grid.states.qv .+= grid.states.ql_tmp
     implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
     grid.states.qv .-= grid.states.ql_tmp
+# implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
+    # θ_my_bot!(θl_t,grid, constants) #
 
     implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux)
     implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux)
@@ -265,26 +274,26 @@ function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
     # end
 
     # CURRENT (buggy denominator): diss = ε [m²/s³], so dt*diss has units m²/s², not dimensionless.
-    for k in 1:nz
-        de   = (SM[k] * GM[k] + SH[k] * GH[k]) * (2 * grid.states.e[k])^(3/2) / l[k]
-        diss = tke.my_diss * (2 * grid.states.e[k])^(3/2) / l[k]
-        grid.states.e[k] = (grid.states.e[k] + dt * (de)) / (1 + dt * diss)
-    end
+    # for k in 1:nz
+    #     de   = (SM[k] * GM[k] + SH[k] * GH[k]) * (2 * grid.states.e[k])^(3/2) / l[k]
+    #     diss = tke.my_diss * (2 * grid.states.e[k])^(3/2) / l[k]
+    #     grid.states.e[k] = (grid.states.e[k] + dt * (de)) / (1 + dt * diss)
+    # end
 
     # grid.states.e .= min.(grid.states.e, 0.4)
 
     # FIXED (correct semi-implicit): diss_rate = ε/e = 2q/(B1*l) [s⁻¹], so dt*diss_rate is dimensionless.
     # Derivation: linearize ε^(n+1) ≈ (ε^n/e^n)*e^(n+1), solve → e = (e + dt*prod)/(1 + dt*diss_rate).
     # Reference: MY82 dissipation formula ε=q³/(B1*l); semi-implicit form in Durran (1999) §2.4.
-    # for k in 1:nz
-    #     # q = sqrt(2 * max(grid.states.e[k], tke.e_min))
-    #     q         = sqrt(2 * grid.states.e[k])
-    #     prod      = (SM[k] * GM[k] + SH[k] * GH[k]) * q^3 / l[k]
-    #     diss_rate = tke.my_diss * 2 * q / l[k]   # s⁻¹ = ε/e
-    #     # grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), tke.e_min)
-    #     grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
-    # end
-    # grid.states.e .= max.(grid.states.e, tke.e_min)
+    for k in 1:nz
+        # q = sqrt(2 * max(grid.states.e[k], tke.e_min))
+        q         = sqrt(2 * grid.states.e[k])
+        prod      = (SM[k] * GM[k] + SH[k] * GH[k]) * q^3 / l[k]
+        diss_rate = tke.my_diss * 2 * q / l[k]   # s⁻¹ = ε/e
+        # grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), tke.e_min)
+        grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
+    end
+    grid.states.e .= max.(grid.states.e, tke.e_min)
 
     return nothing
 end
