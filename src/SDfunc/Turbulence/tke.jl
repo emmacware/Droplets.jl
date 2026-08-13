@@ -46,19 +46,18 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
         my25_stability_functions(l,K_h,K_m,K_e,GH,GM,SM,SH, k,tke,grid,constants)
     end
     turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
+    # turbulent_droplet_diffusion_wellmixed!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
     # stochastic_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
     # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
-
-
+    # turbulent_droplet_diffusion_visser!(scmsettings.turbulent_droplet_diffusion_on,droplets, grid, K_h, dt)
+    # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
+    # turbulent_droplet_diffusion_visser!(scmsettings.turbulent_droplet_diffusion_on,droplets, grid, K_h, dt)
+ 
     diffuse_fields!(grid, tke, K_h,K_m,K_e,constants, dt,turbdata)
 
     # apply_counter_gradient!(grid, tke, K_h, constants, dt)
     tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
 
-
-    # turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
-    # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt,e_prev)
-    # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
 end
 
 function turb_timestep!(::DynOFF,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,

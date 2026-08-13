@@ -61,8 +61,8 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
     recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)
     sort!(droplets.I, by = k -> droplets.cell_id[k])
-    keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants)
-    sort!(droplets.I, by = k -> droplets.cell_id[k])
+    # keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants)
+    # sort!(droplets.I, by = k -> droplets.cell_id[k])
 
     fill_grid_ranges!(droplets)
 
@@ -134,7 +134,7 @@ function recycle_top_escape!(::DynON, droplets, spatialsettings)
         droplets.z_loc[k] < Z_max && continue
         droplets.z_loc[k] = FT(0.1)
         droplets.cell_id[k] = 1
-        find_equilibrium_radius.(droplets,k, 0.9, T, S_env,constants)
+        find_equilibrium_radius.(droplets,k, 0.95, T, S_env,constants)
     end
 
     return
@@ -159,7 +159,7 @@ function fill_grid_ranges!(droplets)
     end
 end
 
-function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 200)
+function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 400)
     FT = eltype(droplets.X)
     fill_grid_ranges!(droplets)  # ensure ranges are current
     nz = length(droplets.grid_range)
@@ -196,7 +196,7 @@ function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings,
         # Check if donor is valid
         if donor == 0 || donor_count <= 40
             println("No valid donor found or donor count too low.")
-            N_needed = 5
+            # N_needed = 5
             break
         end
 

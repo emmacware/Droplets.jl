@@ -5,7 +5,7 @@ export implicit_diffuse!
 # calculate_Pr, find_bl_height, apply_counter_gradient!
 export tke_settings#, AbstractTurbulenceScheme, ProgTKE, MellorYamada, SmagorinskyLilly, KNMIturb
 # export AbstractMixingLengthFunction, Deardorff, SL, Nonlocal, Blackadar, KNMI
-export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_exact!
+export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_exact!, turbulent_droplet_diffusion_wellmixed!, turbulent_droplet_diffusion_visser!
 export dθldz, moist_buoyancy_frequency
 
 # abstract type AbstractTurbulenceScheme end
@@ -373,8 +373,8 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
     nz    = grid.nz
     dz    = grid.dz
     
-    Ct = FT(0.63)
-    Ce = FT(0.89)
+    Ce = FT(0.63)
+    Ct = FT(0.89)
     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
     # compute_ql_at_cell!.(grid.states, 1:nz,constants)
     # grid.states.qv .+= grid.states.ql_tmp
@@ -397,7 +397,7 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
         # N2 = calculate_buoyancy_frequency(grid, z, constants)
         term = 1
         # N2 > 0 && (term = 1 / (1 + 400 * N2))
-        l_z = l[z]
+        l_z = dz#l[z]
         # l_z = (l[z] + l[zm] + l[zp]) / FT(3)
         tau   = Ct*l_z * sqrt(Ce / e_eff) * term
         sigma2 = (e_eff * FT(2/3))
@@ -429,6 +429,177 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
 
     # compute_ql_at_cell!.(grid.states, 1:nz,constants)
     # grid.states.qv .-= grid.states.ql_tmp
+    return
+end
+
+function turbulent_droplet_diffusion_wellmixed!(::DynOFF,l,droplets::droplet_attributes_1d{FT},
+    grid, tke::tke_settings{FT}, dt::FT) where FT
+end
+function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attributes_1d{FT},
+    grid, tke::tke_settings{FT}, dt::FT) where FT
+    # Bahlali, M.L., Henry, C., Carissimo, B. (2020), "On the Well-Mixed Condition and
+    # Consistency Issues in Hybrid Eulerian/Lagrangian Stochastic Models of Dispersion",
+    # Boundary-Layer Meteorol. 174, 275-296.
+    #
+    # Implements their simplified Langevin model (SLM), fluctuating-velocity formulation
+    # (their Table 1, second row; Sect. 2.1), specialized to this 1D column:
+    #   dw' = [∂R33/∂z] dt - (w'/TL) dt + √(C0 ε) dW
+    #   TL  = (e/ε) / (½ + ¾ C0)                          (their TL formula, Sect. 2.1)
+    #   R33 = (2/3) e                                      (isotropic vertical-velocity variance)
+    # The mean-shear cross-term in their Table 1 (-U'p,j ∂⟨Uf,i⟩/∂xj) is dropped: it
+    # vanishes for the same reason it does in their own "infinite channel flow" case
+    # (Sect. 3.2, structurally the same 1D problem) -- no mean vertical velocity/shear
+    # to advect against in this column. ε is not separately available here (their
+    # Code_Saturne solves it directly); we use the same MY82 dissipation-rate formula
+    # weil_turbulent_droplet_diffusion! already uses, ε = c_B1⁻¹(2e)^(3/2)/l, for
+    # consistency with the rest of this file. C0 = 2.1 follows their calibration
+    # (Sect. 2.2.4). They quantify the failure mode of omitting the drift term directly:
+    # particles pile up at the top of the column with local errors up to 53% (their
+    # Fig. 7b); including it brings the error down to <1-5%.
+    #
+    # This is NOT algebraically the same drift as Thomson (1987)/Weil et al. (2004)
+    # (½ ∂σ²_w/∂z = (1/3) ∂e/∂z) -- Bahlali's ∂R33/∂z = (2/3) ∂e/∂z has no ½ factor.
+    # Both are independently-derived corrections for the same underlying problem (from
+    # Pope's (1987) mean-continuity argument here, vs. Thomson's Fokker-Planck argument
+    # for turbulent_droplet_diffusion_wellmixed!'s previous form) -- see
+    # weil_turbulent_droplet_diffusion! below for that alternative.
+    nz = grid.nz
+    dz = grid.dz
+    C0 = FT(2.1)
+
+    inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
+    z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx-1) * grid.dz)
+    for z in 1:inv_idx
+        isempty(droplets.grid_range[z]) && continue
+        k = droplets.I[droplets.grid_range[z]]
+
+        if !isnothing(inv_idx) && z >= inv_idx
+            droplets.w_prime[k] .= 0
+            continue
+        end
+        zm = max(z - 1, 1)
+        zp = min(z + 1, nz)
+
+        e_z   = grid.states.e[z]
+        l_z   = l[z]
+        eps_z = max(tke.my_diss * (2*e_z)^FT(1.5) / l_z, FT(1e-10))
+
+        # TL from Bahlali et al.'s formula (a genuine Lagrangian-timescale estimate on
+        # its own), but the noise amplitude b is solved *backward* from the target
+        # variance sigma2 = (2/3)e -- like turbulent_droplet_diffusion!/
+        # weil_turbulent_droplet_diffusion! do -- rather than independently from C0·ε.
+        # Paired with an independently-specified TL, b = √(C0ε) only reproduces R33
+        # exactly when e/ε come from the same Rotta-consistent closure the SLM assumes
+        # (see module-level note above); we don't have that here, only MY2.5's e. Solving
+        # b backward guarantees Var_eq = b²TL/2 = sigma2 exactly regardless of TL's
+        # source, sidestepping that requirement while keeping TL's physical role (it
+        # still sets the w' autocorrelation/decorrelation timescale, just not the
+        # variance).
+        TL = (e_z / eps_z) / (FT(0.5) + FT(0.75)*C0)
+        sigma2 = FT(2/3) * e_z
+        b  = sqrt(2 * sigma2 / TL)
+        w_corr  = 1 - dt / (2*TL)
+        dt_sqrt = sqrt(dt)
+        dt_32   = dt * dt_sqrt
+
+        # ∂R33/∂z = (2/3) ∂e/∂z, centered on the same zm/zp used above
+        dz_eff = (z == 1 || z == nz) ? dz : FT(2)*dz
+        drift  = FT(2/3) * (grid.states.e[zp] - grid.states.e[zm]) / dz_eff * dt
+
+        n1 = randn(FT, length(k))
+        n2 = randn(FT, length(k))
+        w0 = copy(droplets.w_prime[k])
+
+        droplets.z_loc[k]   .+= w0 .* (dt * w_corr) .+ drift .* dt .+ b .* FT(0.5) .* (n1 .+ n2 ./ sqrt(FT(3))) .* dt_32
+        droplets.w_prime[k] .+= (-w0 .* (dt / TL) .+ b .* n1 .* dt_sqrt) .* w_corr .+ drift
+
+        for ki in k
+            if droplets.z_loc[ki] > z_inv
+                droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
+                droplets.w_prime[ki] = -droplets.w_prime[ki]
+            elseif droplets.z_loc[ki] < 0
+                droplets.z_loc[ki] = rand()* dz
+                droplets.w_prime[ki] = -droplets.w_prime[ki]
+            end
+        end
+
+        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
+    end
+
+    return
+end
+
+function turbulent_droplet_diffusion_visser!(::DynOFF, droplets::droplet_attributes_1d{FT},
+    grid, K_centers::Vector{FT}, dt::FT) where FT
+end
+function turbulent_droplet_diffusion_visser!(::DynON, droplets::droplet_attributes_1d{FT},
+    grid, K_centers::Vector{FT}, dt::FT) where FT
+    # Visser, A.W. (1997), "Using random walk models to simulate the vertical
+    # distribution of particles in a turbulent water column", Mar. Ecol. Prog. Ser.
+    # 158, 275-281.
+    #
+    # A "naive" random walk driven directly by a spatially-varying diffusivity K(z)
+    # (Δz = R√(2K(z)Δt)) violates the well-mixed condition: particles spuriously
+    # accumulate wherever K is smallest -- the oceanographic-literature analogue of
+    # the TKE-pileup problem turbulent_droplet_diffusion! has. Visser's fix has two
+    # parts: (1) an explicit deterministic drift dK/dz, and (2) evaluating the noise
+    # term's diffusivity at the *half-step* position z + ½K'(z)Δt rather than at z
+    # itself -- this second part is what keeps the scheme well-mixed even where K(z)
+    # is strongly curved between grid cells, not just where it's smooth.
+    #
+    # Unlike turbulent_droplet_diffusion!/weil_turbulent_droplet_diffusion! (Markov-1:
+    # an OU process for w' that then advects position), this is Visser's original
+    # Markov-0 formulation: position is updated directly from K(z), with no w_prime
+    # state at all. K_centers here is the same K_h eddy diffusivity that drives the
+    # Eulerian θ/qv/e diffusion (implicit_diffuse!, tke.jl), so both the mean fields
+    # and the particles are transported by a single consistent diffusivity.
+    nz = grid.nz
+    dz = grid.dz
+    zc = grid.centers_z
+
+    inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:nz)
+    z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx-1) * dz)
+
+    for z in 1:nz
+        isempty(droplets.grid_range[z]) && continue
+        !isnothing(inv_idx) && z >= inv_idx && continue
+        k = droplets.I[droplets.grid_range[z]]
+
+        zm = max(z - 1, 1)
+        zp = min(z + 1, nz)
+        dz_eff = (z == 1 || z == nz) ? dz : FT(2)*dz
+        dKdz   = (K_centers[zp] - K_centers[zm]) / dz_eff
+
+        # K evaluated at the half-step position, linearly interpolated between
+        # cell centers (K_centers is only known at cell centers, not continuously)
+        z_half = zc[z] + FT(0.5) * dKdz * dt
+        K_half = if z_half <= zc[1]
+            K_centers[1]
+        elseif z_half >= zc[nz]
+            K_centers[nz]
+        else
+            jlo  = clamp(floor(Int, (z_half - zc[1]) / dz) + 1, 1, nz - 1)
+            frac = (z_half - zc[jlo]) / dz
+            K_centers[jlo] + frac * (K_centers[jlo+1] - K_centers[jlo])
+        end
+        K_half = max(K_half, zero(FT))
+
+        R  = randn(FT, length(k))
+        Δz = dKdz * dt .+ R .* sqrt(2 * K_half * dt)
+
+        droplets.z_loc[k] .+= Δz
+
+        for ki in k
+            if !isnothing(inv_idx) && droplets.z_loc[ki] > z_inv
+                droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
+            elseif droplets.z_loc[ki] < 0
+                droplets.z_loc[ki] = -droplets.z_loc[ki]
+            end
+        end
+
+        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / dz) .+ 1, 1, nz)
+    end
+
     return
 end
 

@@ -35,7 +35,7 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     Rd::FT = FT(287.0)        # 
     Rv::FT = FT(461.0)        # 
     gconst::FT = FT(9.8)    # gravitational constant, m/s2
-    L::FT = FT(22.6e5)         # Latent Heat of Vaporization J/kg
+    L::FT = FT(25.0e5)         # Latent Heat of Vaporization J/kg 22.6e5
     Cp_water::FT = FT(4181)        # Specific Heat of Dry air at constant pressure J/kgK
     Cp_vapor::FT = FT(1859)     # ClimaParams "isobaric_specific_heat_vapor"
     Cp_air::FT = FT(1005)

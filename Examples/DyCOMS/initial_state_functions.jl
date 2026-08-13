@@ -103,18 +103,20 @@ function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
     # Allocate superdroplets proportionally to qv, only a thin layer above inversion (qt < 0.008)
     # Top half of BL gets 3x the weight of the bottom half
     weights = ifelse.(qv_profile .< FT(0.008), FT(0), qv_profile)
+
     bl_top = something(findlast(!iszero, weights), 0)
     mid = div(bl_top, 2)
     weights[mid+1:bl_top] .*= 3
     # seed a thin layer above the inversion (entrainment zone) so some aerosol exists
     # there too, at the same weight as the sub-cloud-deck layer (pre-boost)
-    above_inv = (bl_top+1):min(bl_top+10, nz)
+    above_inv = (bl_top+1):min(bl_top+30, nz)
     weights[above_inv] .= weights[1]
     weights ./= sum(weights)
     Ns_per_cell = floor.(Int, weights .* Ns)
     remainder = Ns - sum(Ns_per_cell)
     top_cells = sortperm(weights .* Ns .- Ns_per_cell, rev=true)[1:remainder]
     Ns_per_cell[top_cells] .+= 1
+    Ns_per_cell = fill(div(Ns, nz), nz)
 
     offset = 0
     for k in 1:nz

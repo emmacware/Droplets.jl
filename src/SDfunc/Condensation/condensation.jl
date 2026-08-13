@@ -131,7 +131,8 @@ end
 function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
     raddata::Rad,
     absliq_r_interp::Abs,
-    timestep::FT, iters::Int) where {FT, Abs,Rad}
+    timestep::FT, iters::Int, conddata::Cd=nothing, depth::Int=0, max_depth::Int=6) where {FT, Abs,Rad,Cd}
+    depth == 0 && conddata !== nothing && (conddata.bisection_calls[droplets.cell_id[i]] += 1)
     R      = volume_to_radius(droplets.X[i])
     dry_r3 = droplets.dry_r3[i]
     dry_r  = cbrt(dry_r3)
@@ -140,16 +141,47 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
     c      = FT(2) / (FK(T, constants) + FD(T, constants))
     S1     = Senv - one(FT)
     R2     = R * R
+
+    # Scrit = critical (haze-max) supersaturation for this droplet's dry size/kappa.
+    # Past it there is no equilibrium root at all (the droplet is unconditionally
+    # activated), so don't waste recursion trying to bracket one — drop the
+    # Kelvin/solute terms (negligible once past the hump) and integrate the
+    # remaining smooth diffusional growth law analytically.
+    r_crit = sqrt(3 * b / A)
+    Scrit  = one(FT) + sqrt(4 * A^3 / (27 * b))
+    if Senv > Scrit
+        r_new = sqrt(max(R2 + FT(2) * c * S1 * timestep, dry_r * dry_r))
+        droplets.X[i] = FT(4π/3) * r_new^3
+        return
+    end
+
     F0     = c * (S1 -A/R + b/R^3)
-    Rcrit  = b > 0 ? sqrt(FT(3) * b / A) : FT(Inf)  # radius of the Köhler-curve hump
 
     # bisect in r-space: g(r) = r² - R²_old - Δt·c·(S1 + (b - A·r²)/r³)
     # one sqrt for the non-trivial bracket bound; none inside the loop
     if F0 >= 0
         lo_r = max(dry_r, R)
         hi_r = sqrt(R2 + FT(2) * F0 * timestep)
+        # only cap at r_crit while still searching below the hump (unactivated
+        # haze droplet): once already past it (R > r_crit), this is just an
+        # ordinary large droplet doing normal diffusional growth and r_crit no
+        # longer bounds anything — capping there would invert the bracket
+        lo_r < r_crit && (hi_r = min(hi_r, r_crit))
     else
-        lo_r = sqrt(max(dry_r * dry_r, R2 + FT(2) * F0 * timestep))
+        # Evaporation can be far faster/more nonlinear than growth — a droplet
+        # can fully desiccate back to its dry core within this substep, in
+        # which case no root exists above dry_r at all. Test the widest
+        # physically valid bracket directly: any real root must lie in
+        # [dry_r, R]. If it doesn't bracket one, the droplet dries out
+        # completely this substep — resolve that now instead of recursing to
+        # (re)discover the same thing up to max_depth times.
+        g_dry = dry_r * dry_r - R2 - timestep * c * (S1 - A / dry_r + kappa)
+        g_R   = -timestep * c * F0
+        if g_dry * g_R >= 0
+            droplets.X[i] = FT(4π/3) * dry_r^3
+            return
+        end
+        lo_r = dry_r
         hi_r = R
     end
 
@@ -161,11 +193,25 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
 
 
     if g_lo * g_hi >= 0
-        r_new = max(r_new, dry_r)
         # near the dry radius the solute term dominates F0, so extrapolating it over the
-        # full timestep can overshoot Rcrit and land the bracket on the runaway branch
-        # instead of the stable haze root; if that happened, stop at Rcrit for this step
-        # R < Rcrit < r_new && (r_new = Rcrit)
+        # full timestep can overshoot the Köhler-curve hump and land the bracket on the
+        # runaway branch instead of the stable haze root; retry with a smaller substep
+        # rather than accepting the unbracketed midpoint
+        if depth < max_depth
+            half = timestep * FT(0.5)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, constants, raddata, absliq_r_interp, half, iters, conddata, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, constants, raddata, absliq_r_interp, half, iters, conddata, depth + 1, max_depth)
+            return
+        end
+        if conddata !== nothing
+            conddata.bisection_maxdepth_hits[droplets.cell_id[i]] += 1
+            if F0 >= 0
+                conddata.bisection_maxdepth_hits_growth[droplets.cell_id[i]] += 1
+            else
+                conddata.bisection_maxdepth_hits_shrink[droplets.cell_id[i]] += 1
+            end
+        end
+        r_new = max(r_new, dry_r)
         droplets.X[i] = FT(4π/3) * r_new^3
         return
     end
@@ -180,12 +226,11 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
         else
             lo2 = r2;  g_lo = g_mid
         end
-        (hi2 - lo2) < 1e-10 * r2 && break
+        (hi2 - lo2) < 1e-4 * r2 && break
     end
     r2 = (lo2 + hi2) * FT(0.5)
 
     r_new = max(sqrt(r2), dry_r)
-    # R < Rcrit < r_new && (r_new = Rcrit)
     droplets.X[i] = FT(4π/3) * r_new^3
     return
 end
@@ -222,7 +267,10 @@ end
 function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, constants::Constants{FT},
     raddata::Rad,
     absliq_r_interp::Abs,
-    timestep::FT, iters::Int) where {FT, Abs,Rad}
+    timestep::FT, iters::Int, conddata::Cd=nothing, depth::Int=0, max_depth::Int=6) where {FT, Abs,Rad,Cd}
+
+    depth == 0 && (raddata.cond_rad_term[i] = zero(FT))
+    depth == 0 && conddata !== nothing && (conddata.bisection_calls[droplets.cell_id[i]] += 1)
 
     X_old  = droplets.X[i]
     R      = volume_to_radius(X_old)
@@ -238,16 +286,60 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     R2     = R * R
     radcoeff = (fk/(constants.L *constants.ρl))/(fk+fd)
 
+    # Scrit = critical (haze-max) supersaturation for this droplet's dry size/kappa.
+    # Past it there is no equilibrium root at all (the droplet is unconditionally
+    # activated), so don't waste recursion trying to bracket one — drop the
+    # Kelvin/solute terms (negligible once past the hump) and integrate the
+    # remaining smooth diffusional + radiative growth analytically.
+    r_crit = sqrt(3 * b / A)
+    Scrit  = one(FT) + sqrt(4 * A^3 / (27 * b))
+    if Senv > Scrit
+        rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
+        Fcond0 = c * S1
+        F0 = Fcond0 + rad0
+        r_new = sqrt(max(R2 + FT(2) * F0 * timestep, dry_r * dry_r))
+        X_new = FT(4π/3) * r_new^3
+
+        dX_total = X_new - X_old
+        dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
+
+        droplets.X[i] = X_new
+        raddata.cond_rad_term[i] += dX_total - dX_cond
+        return
+    end
+
     rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
     Fcond0   = c * (S1 + (b - A * R2) / (R2 * R))
     F0 = Fcond0 + rad0
-    Rcrit  = b > 0 ? sqrt(FT(3) * b / A) : FT(Inf)  # radius of the Köhler-curve hump
 
     if F0 >= 0
         lo_r = max(dry_r, R)
         hi_r = sqrt(R2 + FT(2) * F0 * timestep)
+        # only cap at r_crit while still searching below the hump (unactivated
+        # haze droplet): once already past it (R > r_crit), this is just an
+        # ordinary large droplet doing normal diffusional growth and r_crit no
+        # longer bounds anything — capping there would invert the bracket
+        lo_r < r_crit && (hi_r = min(hi_r, r_crit))
     else
-        lo_r = sqrt(max(dry_r * dry_r, R2 + FT(2) * F0 * timestep))
+        # Evaporation can be far faster/more nonlinear than growth — a droplet
+        # can fully desiccate back to its dry core within this substep, in
+        # which case no root exists above dry_r at all. Test the widest
+        # physically valid bracket directly: any real root must lie in
+        # [dry_r, R]. If it doesn't bracket one, the droplet dries out
+        # completely this substep — resolve that now instead of recursing to
+        # (re)discover the same thing up to max_depth times.
+        g_dry = dry_r * dry_r - R2 - timestep * (c * (S1 - A / dry_r + kappa) +
+                radcoeff*calc_cond_rad_term(dry_r, z, constants, raddata, absliq_r_interp))
+        g_R   = -timestep * F0
+        if g_dry * g_R >= 0
+            X_new = FT(4π/3) * dry_r^3
+            dX_total = X_new - X_old
+            dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
+            droplets.X[i] = X_new
+            raddata.cond_rad_term[i] += dX_total - dX_cond
+            return
+        end
+        lo_r = dry_r
         hi_r = R
     end
 
@@ -258,20 +350,31 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     r2_new = (lo2 + hi2) * FT(0.5)
 
     if g_lo * g_hi >= 0
-        # r2_new = r_new * r_new
+        # see dXkappakohler_bisection(::DynOFF, ...): the linear extrapolation used to
+        # build the bracket can overshoot the Köhler-curve hump; retry with a smaller
+        # substep rather than accepting the unbracketed midpoint
+        if depth < max_depth
+            half = timestep * FT(0.5)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, constants, raddata, absliq_r_interp, half, iters, conddata, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, constants, raddata, absliq_r_interp, half, iters, conddata, depth + 1, max_depth)
+            return
+        end
+        if conddata !== nothing
+            conddata.bisection_maxdepth_hits[z] += 1
+            if F0 >= 0
+                conddata.bisection_maxdepth_hits_growth[z] += 1
+            else
+                conddata.bisection_maxdepth_hits_shrink[z] += 1
+            end
+        end
         r_new  = max(sqrt(r2_new), dry_r)
-        # see dXkappakohler_bisection(::DynOFF, ...): if the (possibly oversized) bracket
-        # pushed the result past Rcrit from below the haze branch, stop at Rcrit instead
-        # R < Rcrit < r_new && (r_new = Rcrit)
         X_new  = FT(4π/3) * r_new^3
 
-        # F_cond = c * (S1 + (b - A * r_new*r_new) / (r_new * r_new * r_new))
-        # F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
         dX_total = X_new - X_old
         dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
-    
+
         droplets.X[i] = X_new
-        raddata.cond_rad_term[i] = dX_total - dX_cond
+        raddata.cond_rad_term[i] += dX_total - dX_cond
         return
     end
 
@@ -285,29 +388,21 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         else
             lo2 = r2_new;  g_lo = g_mid
         end
-        (hi2 - lo2) < 1e-10 * r2_new && break
+        (hi2 - lo2) < 1e-4 * r2_new && break
         r2_new = (lo2 + hi2) * FT(0.5)
     end
     r2_new = (lo2 + hi2) * FT(0.5)
 
     r_new  = sqrt(r2_new)
-    
-
-    # F_cond = c * (S1 + (b - A * r2_new) / (r2_new * r_new))
-    # F_rad  = calc_cond_rad_term(r_new, z, constants, raddata, absliq_r_interp)
-
     r_new  = max(r_new, dry_r)
-    # R < Rcrit < r_new && (r_new = Rcrit)
     r2_new = r_new * r_new
     X_new  = FT(4π/3) * r2_new*r_new
-
-    # one final eval at r_new to correctly split dX into condensation vs radiation
 
     dX_total = X_new - X_old
     dX_cond  = iszero(F0) ? dX_total : dX_total * Fcond0 / F0
 
     droplets.X[i] = X_new
-    raddata.cond_rad_term[i] = dX_total - dX_cond
+    raddata.cond_rad_term[i] += dX_total - dX_cond
     return
 end
 
@@ -712,7 +807,7 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
         for idrop in k
             droplets.ξ[idrop] == 0 && continue
             X_before = droplets.X[idrop]
-            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 50)
+            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, constants, raddata, absliq_r_interp, Δtg, 20, conddata)
             ΔVdrop += (droplets.X[idrop] - X_before) * droplets.ξ[idrop]
         end
         # conddata.vol_change_helper[z] = ΔV

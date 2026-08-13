@@ -444,14 +444,19 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
     end
 end
 
-# Fixed thermodynamics (KiD): advect ρqv with fixed ρ, θ and ρ unchanged
+# Fixed thermodynamics (KiD): advect qv in flux form against a static background
+# density, matching PyMPDATA's non_unit_g_factor scheme (PySDM's Shipway_and_Hill_2012
+# MPDATA_1D: advector = rho*w(t)*dt/dz built straight from the prescribed mass flux,
+# g_factor = the fixed rhod(z) profile, never re-advected). grid.wind.w here carries
+# that same mass flux (see kid1d.jl), not velocity, so GCz needs no density division.
+# grid.states.ρ is never touched here -- nothing else updates it during a KiD step
+# (turbulence/radiation are off), so it stays pinned at its t=0 hydrostatic value,
+# serving as the fixed background field on both sides of the qv .*=/.  /= below.
 function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d, constants::Constants) where {FT<:AbstractFloat}
     GCz = grid.wind.w * Δt ./ grid.dz
     grid.states.qv .*= grid.states.ρ
     mpdata_step!(grid.states.qv, GCz, tmp, settings)
-    mpdata_step!(grid.states.ρ, GCz, tmp, settings)
     grid.states.qv ./= grid.states.ρ
-    ρ_calc_θ!(grid.states.ρ, grid.states.P, grid.states.θ, grid.states.qv, constants)
     return
 end
 

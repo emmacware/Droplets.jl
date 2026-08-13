@@ -14,16 +14,16 @@ const FT = Float64
 
 # ── Numerical settings ────────────────────────────────────────────────────────
 const Z_max = 3000.0   # m
-const dz    = 25.0     # m
-const nz    = Int(Z_max / dz)   # 120
-const dt    = 1.0      # s
+const dz    = 50.0     # m
+const nz    = Int(Z_max / dz)   #
+const dt    = 5.0      # s
 const dt_coag = 0.1
 const dt_cond = 0.1
 const Ns_per_grid = 32
 seed = 42
 Random.seed!(seed)
 const t_max    = 3600  # s  (60 min)
-const t_output = 60.0  # s
+const t_output =  60  # s
 
 # ── Shipway & Hill 2012 initial profiles ─────────────────────────────────────
 θ_initial(z) = z <= 740.0 ? 297.9 :
@@ -34,23 +34,23 @@ qv_initial(z) = z <= 740.0 ? 0.015 + (0.0138 - 0.015) * z / 740.0 :
 # θ_initial(z) = calc_θ_dry(constants, θs_initial(z), qv_initial(z))
                     
 # ── KiD kinematic updraft: ρw = ρw₁ sin(πt/t₁) for t < t₁, else 0 ──────────
-const rho_times_w_1 = 2.0    # kg m⁻² s⁻¹
-# const rho_STP_kid   = 1.225  # kg m⁻³  (used for reservoir depth estimate)
+const rho_times_w_1 = 3.0    # kg m⁻² s⁻¹
+const rho_STP_kid   = 1.225  # kg m⁻³  (used for reservoir depth estimate)
 # const apprx_w1      = rho_times_w_1 / rho_STP_kid   # ≈ 1.63 m/s
 const t_w           = 600.0  # s
 prescribed_rho_w(t) = t < t_w ? rho_times_w_1 * sin(π * t / t_w) : 0.0
 
 # ── Lognormal aerosol: mode = 0.04 μm, σ_geom = 1.4, N = 50 cm⁻³ ───────────
-const n0         = 50.0 * ccm_to_cm   # m⁻³
+n0         = 50 * ccm_to_cm   # m⁻³
 const r_mode_kid = 0.04e-6            # m
 const sigma_geom = 1.4
 const sigma_ln   = log(sigma_geom)
 const mu_ln      = log(r_mode_kid) + sigma_ln^2   # ensures mode = r_mode_kid
 initial_aerosol_dist = LogNormal(mu_ln, sigma_ln)
 
-const kappa_kid               = 0.9
-const ammonium_sulfate_density = 1.78e3   # kg m⁻³
-const P_surface_kid            = 100000.0 # Pa  (Shipway & Hill 2012 reference)
+const kappa_kid               = 1.0
+ammonium_sulfate_density = 1.78e3   # kg m⁻³
+const P_surface_kid            = 100700.0 # Pa  (Shipway & Hill 2012 reference)
 
 # ── Settings structs ──────────────────────────────────────────────────────────
 
@@ -107,7 +107,7 @@ grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_en
     coagsettings,spatialsettings,condensationsettings,tkesettings,constants
     )
 
-absliq_r_interp = 0.0
+# absliq_r_interp = 0.0
 
 
 for i in 1:Int(spatialsettings.t_max / dt)
@@ -116,13 +116,10 @@ for i in 1:Int(spatialsettings.t_max / dt)
     end
 
     rho_w_t = prescribed_rho_w(i * dt)
-    w_const = rho_w_t #/ rho_STP_kid   # constant w at all faces for conservative anelastic MPDATA
-    ρ_faces = vcat(grid.states.ρ[1], 0.5 * (grid.states.ρ[1:end-1] .+ grid.states.ρ[2:end]), grid.states.ρ[end]) #
-    ρ_faces[1] = 2 * grid.states.ρ[1] - grid.states.ρ[2]  # Extrapolate ρ to bottom face
-    ρ_faces[end] = 2 * grid.states.ρ[end] - grid.states.ρ[end-1]  # Extrapolate ρ to top face
-    for k in 1:nz+1
-        grid.wind.w[k] = w_const / ρ_faces[k]
-    end
+    # grid.wind.w carries the prescribed mass flux ρw(t) itself (uniform in z, like
+    # PySDM's `advector`), NOT velocity -- mpdata_scm! divides by the fixed background
+    # density instead. Droplet motion still needs actual velocity, computed separately.
+    grid.wind.w .= rho_w_t
     prescribed_w(z) = rho_w_t / grid.states.ρ[clamp(floor(Int, z / dz) + 1, 1, nz)]
 
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
@@ -151,19 +148,20 @@ ptime = plot!(plot_output_timeseries(grid),tskips=20)#, Coalescence: $(scmsettin
 # savefig("DyCOMS_SCMno_wprime.pdf")
 
 p1 = heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
-    grid.output.cloud_LWC,color=:viridis,clims=(0,1.5e-3),colorbar=false,title="Cloud LWC")
+    grid.output.cloud_LWC,color=:BuPu,clims=(0,2e-3),colorbar=false,title="Cloud LWC")
 xlabel!("t (s)")
 yaxis!("z (m)")
 
 p2 = heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
-    grid.output.rain_LWC,color=:viridis,clims=(0,1.5e-3),colorbar=false,title="Rain LWC")
+    grid.output.rain_LWC,color=:BuPu,clims=(0,2e-3),colorbar=false,title="Rain LWC")
 xlabel!("t (s)")
 yaxis!("z (m)")
     
-cbar = heatmap([0],range(0, 1.5e-3, length=100),  reshape(range(0, 1.5e-3, length=100), 1, :), color=:viridis, ylabel="LWC (kg/m³)",colorbar=false ,xticks=false)
+cbar = heatmap([0],range(0, 2e-3, length=100),  reshape(range(0, 2e-3, length=100), 1, :), color=:BuPu, ylabel="LWC (kg/m³)",colorbar=false ,xticks=false)
 
 l = @layout [a b c{0.05w}]
-plot(p1, p2, cbar, layout=l, size=(900,400),plot_title="K1D Droplets.jl             ",left_margin=3Plots.mm, bottom_margin=3Plots.mm,top_margin=3Plots.mm)
+plot(p1, p2, cbar, layout=l, size=(900,400),plot_title="K1D Droplets.jl ",
+left_margin=3Plots.mm, bottom_margin=3Plots.mm,top_margin=3Plots.mm)
 
 # savefig("DropletsKid1d_LWC_heatmaps.pdf")
 
