@@ -48,6 +48,8 @@ end
 function update_droplet_positions!(motion::DynOFF,advection::Dynamic,settling::Dynamic,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
 end
 
+function update_droplet_positions!(motion::DynON,advection::DynOFF,settling::DynOFF,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
+end
 
 # function update_droplet_positions!(motion::DynON,advection::DynON,settling::DynON,droplets::droplet_attributes_1d, w_function::Function, Δt::FT,spatialsettings::spatial_settings_1d,scmsettings,i) where FT<:AbstractFloat
     

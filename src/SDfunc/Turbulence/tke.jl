@@ -4,6 +4,7 @@ export turb_timestep!, tke_update!, bott_mixing_length!
 export deardorff_mixing_length!
 export edmfx_mixing_length!
 export mynn_stability_functions
+export mixing_length!
 
 
 
@@ -34,25 +35,17 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     e_prev = grid.states.e .+ 0
 
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
-    compute_ql_at_cell!.(grid.states, 1:nz,constants)
 
-    # deardorff_mixing_length!(l, grid, tke, constants)
-    bott_mixing_length!(l, grid, tke, constants)
-    # edmfx_mixing_length!(l, grid, tke, constants)
+    mixing_length!(tke.mixing_length_scheme, l, grid, tke, constants)
 
     # calculate_Kh_Km!(turbscheme, K_h, K_m,K_e, l, N2,S2,SM,SH,GN,GH,grid, tke, constants)
 
     for k in 1:nz
         my25_stability_functions(l,K_h,K_m,K_e,GH,GM,SM,SH, k,tke,grid,constants)
     end
-    turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
-    # turbulent_droplet_diffusion_wellmixed!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
-    # stochastic_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
-    # partmc_jump_diffusion!(scmsettings.turbulent_droplet_diffusion_on,grid,droplets, K_h, dt, dz, nz)
-    # turbulent_droplet_diffusion_visser!(scmsettings.turbulent_droplet_diffusion_on,droplets, grid, K_h, dt)
-    # weil_turbulent_droplet_diffusion!(scmsettings.turbulent_droplet_diffusion_on,l, droplets, grid, tke, dt)
-    # turbulent_droplet_diffusion_visser!(scmsettings.turbulent_droplet_diffusion_on,droplets, grid, K_h, dt)
- 
+    run_droplet_diffusion!(scmsettings.droplet_diffusion_scheme, scmsettings.turbulent_droplet_diffusion_on,
+        l, droplets, grid, tke, dt, K_h, e_prev)
+
     diffuse_fields!(grid, tke, K_h,K_m,K_e,constants, dt,turbdata)
 
     # apply_counter_gradient!(grid, tke, K_h, constants, dt)
@@ -69,6 +62,27 @@ end
 
 
 
+# Diffuses the thermodynamic pair diffuse_fields! is asked to use (tke.thermo_variable):
+# either (θ_l, qt) -- the conserved-under-phase-change pair, reconstructing θ/qv from
+# the diffused θ_l/qt + the (pre-diffusion) ql afterward -- or (θ, qv) directly.
+function diffuse_thermo!(::ThetalQtVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
+    implicit_diffuse!(grid.states.θl_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
+    grid.states.θ .= θ_from_θl.(grid.states.P,grid.states.θl_tmp,grid.states.ql_tmp,grid.states.qv,constants)
+
+    implicit_diffuse!(grid.states.qt_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
+end
+
+function diffuse_thermo!(::ThetaQvVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
+    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
+
+    # grid.states.qv .+= grid.states.ql_tmp
+    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    # grid.states.qv .-= grid.states.ql_tmp
+    grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
+    grid.states.θl_tmp .= θl.(grid.states.P,grid.states.θ,grid.states.qt_tmp,grid.states.qv,constants)
+end
+
 function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     nz = grid.nz
     dz = grid.dz
@@ -81,19 +95,7 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     surface_meridional_momentum_flux = - grid.wind.v[1]*tke.u_star^2 / spd
     theta_surf_flux = tke.SHF / (grid.states.ρ[1] * constants.Cp_air * (grid.states.P[1]/constants.P0)^(constants.Rd / constants.Cp_air))
 
-    T_from_theta!(grid.states.T_tmp, grid.states.θ, grid.states.P, grid.states.qv,constants) 
-    grid.states.θ .= θl.(grid.states.P,grid.states.T_tmp,grid.states.ql_tmp,grid.states.qv,constants)
-    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
-    grid.states.θ .= θ_from_θl.(grid.states.P,grid.states.θ,grid.states.ql_tmp,grid.states.qv,constants)
-    T_from_theta!(grid.states.T_tmp, grid.states.θ, grid.states.P, grid.states.qv,constants) 
-
-
-
-    grid.states.qv .+= grid.states.ql_tmp
-    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
-    grid.states.qv .-= grid.states.ql_tmp
-# implicit_diffuse!(θl_t, K_h, dt, dz, nz, sfc_flux = theta_surf_flux)
-    # θ_my_bot!(θl_t,grid, constants) #
+    diffuse_thermo!(tke.thermo_variable, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
 
     implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux)
     implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux)
@@ -137,7 +139,8 @@ end
 function bott_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constants) where FT<:AbstractFloat
     nz  = grid.nz
     dz = grid.dz
-    z_inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:nz) - 1
+    raw_inv = findfirst(k -> grid.states.qv[k] < 0.008, 1:nz)
+    z_inv_idx = isnothing(raw_inv) ? nz : max(raw_inv - 1, 1)
 
     z_inv = grid.centers_z[z_inv_idx]
     # l0 = alpha * z_inv
@@ -172,8 +175,9 @@ by construction.
 
 Simplifications relative to the ClimaAtmos source (single-column, no EDMF updraft/
 environment decomposition here):
-  - l_W: simplified to neutral von Kármán scaling (κz); the Businger/Gryanik
-    Monin-Obukhov stability correction was not ported.
+  - l_W: simplified to neutral von Kármán scaling (κz), Blackadar (1962)-blended
+    with a fixed asymptotic scale `tke.l_inf` so it doesn't grow unbounded with
+    height; the Businger/Gryanik Monin-Obukhov stability correction was not ported.
   - l_TKE: the production-dissipation balance omits the EDMF exchange term
     (`ᶜtke_exch`), which has no counterpart outside EDMF's updraft/environment split.
   - Turbulent Prandtl number fixed at 1 in the buoyancy-production term.
@@ -189,8 +193,9 @@ function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, consta
         z = grid.centers_z[k]
         e = max(grid.states.e[k], zero(FT))
 
-        # l_W: near-surface (neutral von Kármán) scale
-        l_W = vk * z
+        # l_W: near-surface (neutral von Kármán) scale, Blackadar-blended with a
+        # fixed asymptotic scale so it doesn't grow unbounded with z
+        l_W = vk * z * tke.l_inf / (vk * z + tke.l_inf)
 
         # l_TKE: local production/dissipation balance, a_pd*l² = c_d*e^(3/2)
         # (no tke_exch term -- that's an EDMF updraft/environment exchange concept
@@ -211,6 +216,10 @@ function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, consta
     end
 end
 
+mixing_length!(::DeardorffMixing, l, grid, tke, constants) = deardorff_mixing_length!(l, grid, tke, constants)
+mixing_length!(::BottMixing, l, grid, tke, constants) = bott_mixing_length!(l, grid, tke, constants)
+mixing_length!(::EDMFXMixing, l, grid, tke, constants) = edmfx_mixing_length!(l, grid, tke, constants)
+
 
 
 
@@ -228,7 +237,7 @@ function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT}
     θl_k = θl(grid.states.P[k],grid.states.T_tmp[k],grid.states.ql_tmp[k],grid.states.qv[k],constants)
 
     q      = sqrt(2 * max(grid.states.e[k], tke.e_min))
-    N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
+    # N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
     # N2 = moist_buoyancy_frequency(grid, k, constants)
     S2  = S2_flow_deformation(grid, k, constants)
     l2_2e = l[k]^2 / q^2
@@ -292,7 +301,7 @@ function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
         # grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), tke.e_min)
         grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
     end
-    grid.states.e .= max.(grid.states.e, tke.e_min)
+    # grid.states.e .= max.(grid.states.e, tke.e_min)
 
     return nothing
 end
@@ -307,9 +316,12 @@ function bott1997term(grid, k, constants)
     km  = max(k - 1, 1)
     dz_eff = (k == 1 || k == nz) ? dz : 2.0 * dz
 
-    θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
-    θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
-    θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
+    # θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
+    # θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
+    # θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
+    θl_k  = grid.states.θl_tmp[k]#(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
+    θl_kp = grid.states.θl_tmp[kp]#θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
+    θl_km = grid.states.θl_tmp[km]#θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
 
     dθldz_k = (θl_kp - θl_km) / dz_eff
     qt_k  = grid.states.qv[k]  + grid.states.ql_tmp[k]

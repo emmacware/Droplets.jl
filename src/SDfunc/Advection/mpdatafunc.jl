@@ -421,7 +421,7 @@ end
 #     @views 0.5 .* (v[:, 1:end-1] .+ v[:, 2:end])
 # end
 
-function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5) 
+function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5)
     n_corr = settings.n_corr
     vbc::BoundaryCondition = settings.vertical_boundary_condition
 
@@ -462,51 +462,50 @@ end
 
 function mpdata_scm!(::DynOFF,::Dynamic,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 end
+
+# Which pair of grid.states arrays MPDATA advects: (θ,qv) directly, or (θ_l,qt) --
+# in the latter case θ/qv are reconstructed after advection (see
+# reconstruct_after_advection! below), using the same ql-computed-from-stale-θ/qv
+# approximation forward_solve.jl's turbulence path already uses.
+advected_thermo_fields(::ThetaQvVar, grid) = grid.states.θ, grid.states.qv
+advected_thermo_fields(::ThetalQtVar, grid) = grid.states.θl_tmp, grid.states.qt_tmp
+
+reconstruct_after_advection!(::ThetaQvVar, grid, constants) = nothing
+function reconstruct_after_advection!(::ThetalQtVar, grid, constants)
+    nz = grid.nz
+    compute_ql_at_cell!.(grid.states, 1:nz, constants)
+    grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
+    grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+end
+
 function mpdata_scm!(::DynON,::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 
     GCz = grid.wind.w * Δt ./ grid.dz
 
+    θ_field, q_field = advected_thermo_fields(settings.thermo_variable, grid)
 
-    # ρqv = grid.states.ρ .* grid.states.qv
-    # ρθ = grid.states.ρ .* grid.states.θ
-    # ρe = grid.states.ρ .* grid.states.e
-    # ρu = grid.states.ρ .* grid.wind.u
-    # ρv = grid.states.ρ .* grid.wind.v
-
-
-    # mpdata_step!(ρqv, GCz,tmp,settings)
-    # mpdata_step!(ρθ, GCz,tmp,settings)
-    # mpdata_step!(ρe, GCz,tmp,settings)
-    # mpdata_step!(ρu, GCz, tmp, settings)
-    # mpdata_step!(ρv, GCz, tmp, settings)
-    # mpdata_step!(grid.states.ρ, GCz,tmp,settings)
-    # grid.states.qv .= ρqv ./ grid.states.ρ
-    # grid.states.θ .= ρθ ./ grid.states.ρ 
-    # grid.states.e .= ρe ./ grid.states.ρ
-    # grid.wind.u .= ρu ./ grid.states.ρ
-    # grid.wind.v .= ρv ./ grid.states.ρ
-    # #kind of naughty but we undo it within this function
-    grid.states.qv .*= grid.states.ρ
-    grid.states.θ .*= grid.states.ρ
-    grid.states.e .*= grid.states.ρ 
+    #kind of naughty but we undo it within this function
+    q_field .*= grid.states.ρ
+    θ_field .*= grid.states.ρ
+    grid.states.e .*= grid.states.ρ
     grid.wind.u .*= grid.states.ρ
     grid.wind.v .*= grid.states.ρ
 
 
-    mpdata_step!(grid.states.qv, GCz,tmp,settings)
-    mpdata_step!(grid.states.θ, GCz,tmp,settings)
+    mpdata_step!(q_field, GCz,tmp,settings)
+    mpdata_step!(θ_field, GCz,tmp,settings)
     mpdata_step!(grid.states.e, GCz,tmp,settings)
     mpdata_step!(grid.wind.u, GCz, tmp, settings)
     mpdata_step!(grid.wind.v, GCz, tmp, settings)
     mpdata_step!(grid.states.ρ, GCz,tmp,settings)
 
-    grid.states.qv ./= grid.states.ρ
-    grid.states.θ ./= grid.states.ρ 
+    q_field ./= grid.states.ρ
+    θ_field ./= grid.states.ρ
     grid.states.e ./= grid.states.ρ
     grid.wind.u ./= grid.states.ρ
     grid.wind.v ./= grid.states.ρ
 
-
+    reconstruct_after_advection!(settings.thermo_variable, grid, constants)
     ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
     return
 end

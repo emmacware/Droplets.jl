@@ -109,14 +109,19 @@ function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
     weights[mid+1:bl_top] .*= 3
     # seed a thin layer above the inversion (entrainment zone) so some aerosol exists
     # there too, at the same weight as the sub-cloud-deck layer (pre-boost)
-    above_inv = (bl_top+1):min(bl_top+30, nz)
+    entrainment_zone_depth = FT(300.0) # m
+    n_cells_above_inv = ceil(Int, entrainment_zone_depth / spatial.z_grid_height)
+    above_inv = (bl_top+1):min(bl_top+n_cells_above_inv, nz)
     weights[above_inv] .= weights[1]
     weights ./= sum(weights)
-    Ns_per_cell = floor.(Int, weights .* Ns)
-    remainder = Ns - sum(Ns_per_cell)
-    top_cells = sortperm(weights .* Ns .- Ns_per_cell, rev=true)[1:remainder]
-    Ns_per_cell[top_cells] .+= 1
-    Ns_per_cell = fill(div(Ns, nz), nz)
+    if spatial.weighted_droplet_allocation
+        Ns_per_cell = floor.(Int, weights .* Ns)
+        remainder = Ns - sum(Ns_per_cell)
+        top_cells = sortperm(weights .* Ns .- Ns_per_cell, rev=true)[1:remainder]
+        Ns_per_cell[top_cells] .+= 1
+    else
+        Ns_per_cell = fill(div(Ns, nz), nz)
+    end
 
     offset = 0
     for k in 1:nz

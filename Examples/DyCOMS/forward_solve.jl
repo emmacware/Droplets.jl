@@ -44,25 +44,50 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         coalescence_timestep!(scmsettings.coalescence,scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
     end
 
+    T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
+    compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    grid.states.qt_tmp .= grid.states.qv + grid.states.ql_tmp
+    grid.states.θl_tmp .= θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+
 
     # Environmental advection
     turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
-    compute_ql_at_cell!.(grid.states, 1:nz,constants)
-    qt = grid.states.qv .+ grid.states.ql_tmp
-    θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # qt = grid.states.qv .+ grid.states.ql_tmp
+    # θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     fill_grid_ranges!(droplets)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
-    grid.states.qv .= qt .- grid.states.ql_tmp
-    grid.states.θ .= θ_from_θl.(grid.states.P, θ_l, grid.states.ql_tmp, grid.states.qv, constants)
+    if tkesettings.thermo_variable isa ThetalQtVar
+        # turbulent diffusion above ran on θl_tmp/qt_tmp (see diffuse_fields! in tke.jl);
+        # reconstruct θ/qv from the diffused pair + the freshly recomputed ql. When
+        # ThetaQvVar is selected instead, diffuse_fields! already updated θ/qv directly,
+        # so this reconstruction is skipped (it would otherwise overwrite them with the
+        # stale pre-turbulence θl_tmp/qt_tmp values from above).
+        grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
+        grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+    end
+    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
+
+
     mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
     update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
+    
+    # fill_grid_ranges!(droplets)
+    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    # grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
+    # grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+    # ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
 
-    sort!(droplets.I, by = k -> droplets.z_loc[k])
+    # update_droplet_positions!(scmsettings.motion,DynOFF(),scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
+
+    # recycle_precipitation! and keep_layer_filled! each refresh grid_range (via
+    # fill_grid_ranges!, which sorts droplets.I by cell_id) themselves when DynON;
+    # recycle_top_escape! doesn't touch grid_range/order at all. So no sort is needed
+    # here -- only the final fill_grid_ranges! below, to leave grid_range consistent
+    # for the next timestep regardless of which of these ran.
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
     recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)
-    sort!(droplets.I, by = k -> droplets.cell_id[k])
-    # keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants)
-    # sort!(droplets.I, by = k -> droplets.cell_id[k])
+    keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants)
 
     fill_grid_ranges!(droplets)
 
@@ -78,8 +103,8 @@ function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagno
     FT = eltype(droplets.X)
     precip_mass = zero(FT)
 
-    # grid_range must be consistent with cell_id order; the caller sorted by z_loc,
-    # so refresh here before using grid_range to find drop_to_split
+    # grid_range may be stale after update_droplet_positions! moved droplets between
+    # cells; refresh before using it to find drop_to_split
     fill_grid_ranges!(droplets)
 
     nz = length(droplets.grid_range)
@@ -159,7 +184,9 @@ function fill_grid_ranges!(droplets)
     end
 end
 
-function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 400)
+function keep_layer_filled!(::DynOFF, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 250)
+end
+function keep_layer_filled!(::DynON, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 250)
     FT = eltype(droplets.X)
     fill_grid_ranges!(droplets)  # ensure ranges are current
     nz = length(droplets.grid_range)
@@ -172,7 +199,7 @@ function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings,
     cell_sd = [collect(droplets.I[droplets.grid_range[g]]) for g in 1:nz]
 
 
-    for c in idx_400m:z_inv_idx
+    for c in z_inv_idx:-1:idx_400m
         N_c = length(cell_sd[c])
         N_c >= min_count && continue
         # println("Cell ", c, " has only ", N_c, " SDs; needs ", min_count)
@@ -190,14 +217,27 @@ function keep_layer_filled!(droplets, grid, spatialsettings, diagnosticsettings,
                 donor = g
             end
         end
+        for g in z_inv_idx+3:nz
+            g == c && continue
+            lg = length(cell_sd[g])
+            if lg > donor_count
+                donor_count = lg
+                donor = g
+            end
+        end
+        if donor == 0
+            # println(N_needed)
+            break
+        end
 
         # println("Donor cell: ", donor, " with count: ", donor_count)
 
         # Check if donor is valid
         if donor == 0 || donor_count <= 40
-            println("No valid donor found or donor count too low.")
-            # N_needed = 5
-            break
+            println(N_needed)
+            # println("No valid donor found or donor count too low.")
+            N_needed = 5
+            # break
         end
 
         # zero-ξ donor slots are already vacated — use them first at no cost

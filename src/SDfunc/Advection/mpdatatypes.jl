@@ -28,21 +28,23 @@ struct mpdata_settings
     end
 end
 
-struct mpdata_settings_1d
+struct mpdata_settings_1d{TVar<:ThermoVariable}
     n_corr::Int
     grid::Int
     vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
     # topcell_boundary_condition::Union{Periodic, NoFlux, Reservoir}
     nonoscillatory::Bool
     infinite_gauge::Bool
+    thermo_variable::TVar  # advect (θ,qv) directly, or (θ_l,qt) with θ/qv reconstructed after
 
     function mpdata_settings_1d(grid::Int;
                              n_corr=2,
                              vertical_boundary_condition::BoundaryCondition=Periodic(),
                              nonoscillatory::Bool=false,
-                             infinite_gauge::Bool=false)
-        new(n_corr, grid, vertical_boundary_condition,
-            nonoscillatory, infinite_gauge)
+                             infinite_gauge::Bool=false,
+                             thermo_variable::ThermoVariable=ThetaQvVar())
+        new{typeof(thermo_variable)}(n_corr, grid, vertical_boundary_condition,
+            nonoscillatory, infinite_gauge, thermo_variable)
     end
 end
 

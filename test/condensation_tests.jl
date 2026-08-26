@@ -352,6 +352,8 @@ end
         fill(ρ_init, nz),
         fill(FT(0.0), nz),
         fill(FT(0.0), nz),
+        fill(FT(0.0), nz),
+        fill(FT(0.0), nz),
         droplets,
         spatial,
     )
@@ -405,7 +407,7 @@ end
         fill(theta_from_T(T_init, P_init,qv_sub, cst), nz),
         fill(qv_sub, nz),
         fill(ρ_ideal_gas(P_init, T_init, qv_sub, cst), nz),
-        fill(FT(0.0), nz), fill(FT(0.0), nz),
+        fill(FT(0.0), nz), fill(FT(0.0), nz),fill(FT(0.0), nz),fill(FT(0.0), nz),
         droplets3, spatial,
     )
     conddata3 = condensation_data(FT, nz, nsd)

@@ -68,16 +68,25 @@ dist = MixtureModel(LogNormal, [(log(m1), σ1), (log(m2), σ2)], [n1/n0, n2/n0])
 
 
 #Settings Structs
-spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=5.0)
+spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=5.0,
+    # weighted_droplet_allocation = false, # uniform Ns/nz per cell instead of qv-weighted seeding
+)
 
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt_coag,kernel=hydrodynamic,hydrodynamic_collision_eff_func=true)
 
 condensationsettings = condensation_settings{FT}(kappa=kappa_ammonium_sulfate,ρ_solute = ammonium_sulfate_density,Δt=dt_cond)
 
-mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux(),infinite_gauge=true)
+mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=NoFlux(),infinite_gauge=true,
+    # thermo_variable = ThetalQtVar(), # advect (θ_l,qt) instead of (θ,qv)
+)
 
 tkesettings = tke_settings{FT}(u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v,
-    LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux)
+    LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux,
+    # mixing_length_scheme = BottMixing(), # or DeardorffMixing(); default EDMFXMixing()
+    # thermo_variable = ThetaQvVar(), # diffuse (θ,qv) directly instead of (θ_l,qt); default ThetalQtVar()
+    # average_e_l_3pt = false, # use e[z] (and l[z]) alone in droplet diffusion instead of averaging [z-1,z,z+1]
+    # droplet_diffusion_length_dz = false, # use the diagnosed mixing length l[z] instead of dz in droplet diffusion
+)
 
 #Default dynamics are all on
 base_scm = (
@@ -91,6 +100,8 @@ base_scm = (
     n_coag                      = round(Int, dt / dt_coag),
     spinup_time                 = 3600.0,
     turbulent_droplet_diffusion_on = DynON(),
+    # droplet_diffusion_scheme    = WellMixedDropletDiffusion(), # or WeilDropletDiffusion(), VisserDropletDiffusion(), NoDropletDiffusion(); default OUDropletDiffusion()
+    # keep_grid_filled            = DynOFF(), # disable donor-cell SD reseeding of thin layers
 )
 
 scmspinupsettings = scm_settings{FT}(; base_scm...,
@@ -149,8 +160,8 @@ end
 
 
 spinup_step = round(Int, scmsettings.spinup_time / dt)
-# bins_output = Dict()
-# ensemble_output = Dict()
+bins_output = Dict()
+ensemble_output = Dict()
 # To skip re-running, load a previous save instead:
 # ensemble_output, bins_output = load("ensemble_output.jld2", "ensemble_output", "bins_output")
 num_bins = 50
@@ -175,7 +186,7 @@ for num_seeds in 1:seeds
             end
             println("Running simulation with rad=", rad, " n0=", n0_change, " seed=", num_seeds)
 
-            droplets_snapshots = Vector{Any}(undef, Int(spatialsettings.t_max / 150))
+            droplets_snapshots = Vector{Any}(undef, Int(spatialsettings.t_max / 3600))
 
             Random.seed!(seed + num_seeds)
 
@@ -187,13 +198,13 @@ for num_seeds in 1:seeds
             grid.states.e[1:inv_idx] .= 0.01#1e-6
             ensemble_output[rad,n0_change,num_seeds] = grid.output
             bins_output[rad,n0_change,num_seeds] = droplets_snapshots
-            try
+            # try
                 for i in 1:spinup_step
                     if i*dt % 3600 == 0
                         println("Timestep: ", i*dt)
-                    end
-                    if i*dt % 150 == 0
-                        droplets_snapshots[Int(div(i*dt,150))] = deepcopy(droplets)
+                    # end
+                    # if i*dt % 600 == 0
+                        droplets_snapshots[Int(div(i*dt,3600))] = deepcopy(droplets)
                     end
 
                     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
@@ -215,9 +226,9 @@ for num_seeds in 1:seeds
                 for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
                     if i*dt % 3600 == 0
                         println("Timestep: ", i*dt)
-                    end
-                    if i*dt % 150 == 0
-                        droplets_snapshots[Int(div(i*dt,150))] = deepcopy(droplets)
+                    # end
+                    # if i*dt % 600 == 0
+                        droplets_snapshots[Int(div(i*dt,3600))] = deepcopy(droplets)
                     end
 
                     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
@@ -230,12 +241,12 @@ for num_seeds in 1:seeds
                     pct = calls > 0 ? round(100 * hits / calls, digits=4) : 0.0
                     println("Main-run bisection max-depth fallback: ", hits, " / ", calls, " (", pct, "%)  [growth: ", growth, ", shrink: ", shrink, "]")
                 end
-            catch e
-                @warn "Simulation failed for rad=$(rad), n0=$(n0_change), seed=$(num_seeds) with error: $(e)"
-                # ensemble_output[rad,n0_change,num_seeds] = nothing
-                # bins_output[rad,n0_change,num_seeds] = nothing
-                continue
-            end
+            # catch e
+            #     @warn "Simulation failed for rad=$(rad), n0=$(n0_change), seed=$(num_seeds) with error: $(e)"
+            #     # ensemble_output[rad,n0_change,num_seeds] = nothing
+            #     # bins_output[rad,n0_change,num_seeds] = nothing
+            #     continue
+            # end
 
 
             ensemble_output[rad,n0_change,num_seeds] = grid.output
@@ -257,7 +268,7 @@ for field in fieldnames(typeof(ensemble_output[false,n0,1]))
     data = getfield(grid.output, field)
     for t in 1:size(data,2)
         if all(data[:,t] .== 0.0)
-            data[:,t] .= NaN
+            data[:,t] .= NaN 
         end
     end
 end

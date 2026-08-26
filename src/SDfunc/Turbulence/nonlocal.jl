@@ -7,6 +7,7 @@ export tke_settings#, AbstractTurbulenceScheme, ProgTKE, MellorYamada, Smagorins
 # export AbstractMixingLengthFunction, Deardorff, SL, Nonlocal, Blackadar, KNMI
 export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_exact!, turbulent_droplet_diffusion_wellmixed!, turbulent_droplet_diffusion_visser!
 export dθldz, moist_buoyancy_frequency
+export run_droplet_diffusion!
 
 # abstract type AbstractTurbulenceScheme end
 # struct ProgTKE <: AbstractTurbulenceScheme end
@@ -21,7 +22,7 @@ export dθldz, moist_buoyancy_frequency
 # struct Blackadar <: AbstractMixingLengthFunction end
 # struct KNMI <: AbstractMixingLengthFunction end
 
-struct tke_settings{FT<:AbstractFloat, GU, GV}
+struct tke_settings{FT<:AbstractFloat, GU, GV, Mix<:MixingLengthScheme, TVar<:ThermoVariable}
     e_min::FT
     u_star::FT
     SHF::FT
@@ -38,6 +39,11 @@ struct tke_settings{FT<:AbstractFloat, GU, GV}
     c_m::FT  # EDMF-X TKE eddy-diffusivity coefficient, Lopez-Gomez et al. (2020) Table 1
     c_d::FT  # EDMF-X TKE dissipation coefficient, Lopez-Gomez et al. (2020) Table 1
     c_b::FT  # EDMF-X static-stability mixing-length coefficient (CLIMAParameters default)
+    l_inf::FT  # Blackadar (1962) asymptotic mixing length, caps edmfx_mixing_length!'s l_W = vk*z term
+    mixing_length_scheme::Mix  # which of deardorff_/bott_/edmfx_mixing_length! computes l
+    thermo_variable::TVar  # whether diffuse_fields! diffuses (θ,qv) directly or (θ_l,qt)
+    average_e_l_3pt::Bool  # droplet diffusion: average e (and l, when used) over [z-1,z,z+1] vs. cell z alone
+    droplet_diffusion_length_dz::Bool  # droplet diffusion: use dz as the length scale instead of the diagnosed mixing length l
 end
 
 function tke_settings{FT}(;
@@ -57,19 +63,27 @@ function tke_settings{FT}(;
         c_m::FT                 = FT(0.14),
         c_d::FT                 = FT(0.22),
         c_b::FT                 = FT(0.4),
+        l_inf::FT               = FT(70.0),
+        mixing_length_scheme::MixingLengthScheme = EDMFXMixing(),
+        thermo_variable::ThermoVariable          = ThetalQtVar(),
+        average_e_l_3pt::Bool    = true,
+        droplet_diffusion_length_dz::Bool = true,
     ) where {FT<:AbstractFloat}
-    tke_settings{FT, typeof(geostrophic_u), typeof(geostrophic_v)}(
+    tke_settings{FT, typeof(geostrophic_u), typeof(geostrophic_v), typeof(mixing_length_scheme), typeof(thermo_variable)}(
         e_min, u_star, SHF, LHF, geostrophic_u, geostrophic_v,
-        dry_buoyancy, c_n, vk, bott_α, bott_β, my_diss, GH_lims, c_m, c_d, c_b)
+        dry_buoyancy, c_n, vk, bott_α, bott_β, my_diss, GH_lims, c_m, c_d, c_b, l_inf,
+        mixing_length_scheme, thermo_variable, average_e_l_3pt, droplet_diffusion_length_dz)
 end
 
 
 function S2_flow_deformation(grid, k, constants)
     if k == 1
-        du_dz = 0.5*(grid.wind.u[2] - grid.wind.u[1]) / grid.dz
-        dv_dz = 0.5*(grid.wind.v[2] - grid.wind.v[1]) / grid.dz
-        # du_dz = (grid.wind.u[1]) / 0.5*grid.dz
-        # dv_dz = (grid.wind.v[1]) / 0.5*grid.dz
+        # one-sided difference over one cell spacing, matching the k==nz case below and
+        # the boundary convention in calculate_buoyancy_frequency/bott1997term (dz_eff=dz
+        # at boundaries, 2dz in the interior) -- this previously carried a spurious extra
+        # 0.5 that halved the near-surface shear estimate for no derivable reason.
+        du_dz = (grid.wind.u[2] - grid.wind.u[1]) / grid.dz
+        dv_dz = (grid.wind.v[2] - grid.wind.v[1]) / grid.dz
     elseif k == grid.nz
         du_dz = (grid.wind.u[end] - grid.wind.u[end-1]) / grid.dz
         dv_dz = (grid.wind.v[end] - grid.wind.v[end-1]) / grid.dz
@@ -90,33 +104,27 @@ end
 
 function calculate_buoyancy_frequency(grid, k, constants; dry::Bool=false)
     g  = constants.gconst
-    nz = grid.nz
-    dz = grid.dz
-    kp = min(k + 1, nz)
-    km = max(k - 1, 1)
-    dz_buo = (k == 1 || k == nz) ? dz : 2.0 * dz
 
     if dry
+        nz = grid.nz
+        dz = grid.dz
+        kp = min(k + 1, nz)
+        km = max(k - 1, 1)
+        dz_buo = (k == 1 || k == nz) ? dz : 2.0 * dz
         θ = grid.states.θ
         return (g / θ[k]) * (θ[kp] - θ[km]) / dz_buo
     end
 
-    L  = constants.L
-    Cp = constants.Cp_air
-    Rd = constants.Rd
-    P0 = constants.P0
-    qv = grid.states.qv
-    ql = grid.states.ql_tmp
-    θ  = grid.states.θ
-    P  = grid.states.P
-
-    RdCp = Rd / Cp
-    LCp  = L / Cp
-    Π_k  = (P[k]  / P0)^RdCp;  θlv_k  = (θ[k]  - LCp * ql[k]  / Π_k)  * (1 + 0.61 * qv[k]  - ql[k])
-    Π_kp = (P[kp] / P0)^RdCp;  θlv_kp = (θ[kp] - LCp * ql[kp] / Π_kp) * (1 + 0.61 * qv[kp] - ql[kp])
-    Π_km = (P[km] / P0)^RdCp;  θlv_km = (θ[km] - LCp * ql[km] / Π_km) * (1 + 0.61 * qv[km] - ql[km])
-    N2 = (g / θlv_k) * (θlv_kp - θlv_km) / dz_buo
-    return N2
+    # θlv = θl*(1 + 0.61qv - ql) (the naive form this used to have) just applies the
+    # unsaturated θv=θ(1+0.61qv-ql) formula straight to θl. That's wrong whenever
+    # ql>0: θ and θl differ by θ ≈ θl*(1 + L*ql/(Cp*T)), and that term (coefficient
+    # ~L/(Cp*T) ≈ 8-9, not the ~-1 the naive form implies) dominates the ql
+    # dependence and has the opposite sign -- condensation heating makes moist air
+    # *more* buoyant per unit ql, not less. bott1997term already implements the
+    # correct saturated/unsaturated-blended version of this (it's what feeds GH in
+    # my25_stability_functions/bott_mixing_length!); reuse it here so
+    # edmfx_mixing_length!/deardorff_mixing_length! see the same buoyancy physics.
+    return (g / grid.states.θl_tmp[k]) * bott1997term(grid, k, constants)
 end
 
 function moist_buoyancy_frequency(grid, k, constants)
@@ -376,6 +384,7 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
     Ce = FT(0.63)
     Ct = FT(0.89)
     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
+    inv_idx = isnothing(inv_idx) ? nz : inv_idx
     # compute_ql_at_cell!.(grid.states, 1:nz,constants)
     # grid.states.qv .+= grid.states.ql_tmp
     # inv_idx = findfirst(k -> grid.states.e[k] < tke.e_min, 1:grid.nz)
@@ -391,14 +400,11 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
         zm = max(z - 1, 1)
         zp = min(z + 1, nz)
 
-        # e_eff = max(grid.states.e[z], tke.e_min)
-        # e_eff = grid.states.e[z]
-        e_eff = (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3)
+        e_eff = tke.average_e_l_3pt ? (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3) : grid.states.e[z]
         # N2 = calculate_buoyancy_frequency(grid, z, constants)
         term = 1
         # N2 > 0 && (term = 1 / (1 + 400 * N2))
-        l_z = dz#l[z]
-        # l_z = (l[z] + l[zm] + l[zp]) / FT(3)
+        l_z = tke.droplet_diffusion_length_dz ? dz : (tke.average_e_l_3pt ? (l[z] + l[zm] + l[zp]) / FT(3) : l[z])
         tau   = Ct*l_z * sqrt(Ce / e_eff) * term
         sigma2 = (e_eff * FT(2/3))
         noise_amp = sqrt(2*sigma2 / tau)
@@ -463,25 +469,27 @@ function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attr
     # Pope's (1987) mean-continuity argument here, vs. Thomson's Fokker-Planck argument
     # for turbulent_droplet_diffusion_wellmixed!'s previous form) -- see
     # weil_turbulent_droplet_diffusion! below for that alternative.
+    #
+    # No qv-threshold inversion wall: entrainment suppression should come from e/l
+    # (hence TL, b) themselves, not from an extra hard cutoff recomputed from the
+    # evolving qv field every step -- see turbulent_droplet_diffusion_visser! for why
+    # that wall's independent movement causes spurious concentration jumps. Only the
+    # domain top/bottom remain reflecting.
     nz = grid.nz
     dz = grid.dz
     C0 = FT(2.1)
+    Z_max = FT(nz) * dz
 
-    inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
-    z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx-1) * grid.dz)
-    for z in 1:inv_idx
+    for z in 1:nz
         isempty(droplets.grid_range[z]) && continue
         k = droplets.I[droplets.grid_range[z]]
 
-        if !isnothing(inv_idx) && z >= inv_idx
-            droplets.w_prime[k] .= 0
-            continue
-        end
         zm = max(z - 1, 1)
         zp = min(z + 1, nz)
 
-        e_z   = grid.states.e[z]
-        l_z   = l[z]
+        e_z   = tke.average_e_l_3pt ? (grid.states.e[z] + grid.states.e[zm] + grid.states.e[zp]) / FT(3) : grid.states.e[z]
+        e_z < tke.e_min && (e_z = tke.e_min)
+        l_z   = tke.droplet_diffusion_length_dz ? dz : (tke.average_e_l_3pt ? (l[z] + l[zm] + l[zp]) / FT(3) : l[z])
         eps_z = max(tke.my_diss * (2*e_z)^FT(1.5) / l_z, FT(1e-10))
 
         # TL from Bahlali et al.'s formula (a genuine Lagrangian-timescale estimate on
@@ -514,8 +522,8 @@ function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attr
         droplets.w_prime[k] .+= (-w0 .* (dt / TL) .+ b .* n1 .* dt_sqrt) .* w_corr .+ drift
 
         for ki in k
-            if droplets.z_loc[ki] > z_inv
-                droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
+            if droplets.z_loc[ki] > Z_max
+                droplets.z_loc[ki] = 2*Z_max - droplets.z_loc[ki]
                 droplets.w_prime[ki] = -droplets.w_prime[ki]
             elseif droplets.z_loc[ki] < 0
                 droplets.z_loc[ki] = rand()* dz
@@ -523,7 +531,7 @@ function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attr
             end
         end
 
-        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, -1, nz)
+        droplets.cell_id[k] = clamp.(floor.(Int, droplets.z_loc[k] / grid.dz) .+ 1, 0, nz)
     end
 
     return
@@ -553,16 +561,21 @@ function turbulent_droplet_diffusion_visser!(::DynON, droplets::droplet_attribut
     # state at all. K_centers here is the same K_h eddy diffusivity that drives the
     # Eulerian θ/qv/e diffusion (implicit_diffuse!, tke.jl), so both the mean fields
     # and the particles are transported by a single consistent diffusivity.
+    #
+    # No qv-threshold inversion wall: entrainment suppression should come from K(z)
+    # itself (my25_stability_functions already drives K_h -> ~0 under strong stable
+    # stratification above the inversion), not from an extra hard cutoff. That cutoff
+    # was recomputed from the evolving qv field every step, so its location jumped
+    # independently of the actual diffusivity -- e.g. discontinuously at the spin-up
+    # -> main-run settings transition -- producing spurious concentration jumps.
+    # Only the domain top/bottom remain reflecting.
     nz = grid.nz
     dz = grid.dz
     zc = grid.centers_z
-
-    inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:nz)
-    z_inv   = isnothing(inv_idx) ? FT(Inf) : FT((inv_idx-1) * dz)
+    Z_max = FT(nz) * dz
 
     for z in 1:nz
         isempty(droplets.grid_range[z]) && continue
-        !isnothing(inv_idx) && z >= inv_idx && continue
         k = droplets.I[droplets.grid_range[z]]
 
         zm = max(z - 1, 1)
@@ -590,8 +603,8 @@ function turbulent_droplet_diffusion_visser!(::DynON, droplets::droplet_attribut
         droplets.z_loc[k] .+= Δz
 
         for ki in k
-            if !isnothing(inv_idx) && droplets.z_loc[ki] > z_inv
-                droplets.z_loc[ki] = 2*z_inv - droplets.z_loc[ki]
+            if droplets.z_loc[ki] > Z_max
+                droplets.z_loc[ki] = 2*Z_max - droplets.z_loc[ki]
             elseif droplets.z_loc[ki] < 0
                 droplets.z_loc[ki] = -droplets.z_loc[ki]
             end
@@ -757,6 +770,19 @@ end
 
 #     return
 # end
+
+# Dispatches scmsettings.droplet_diffusion_scheme to the corresponding turbulent
+# droplet transport implementation above; onoff is scmsettings.turbulent_droplet_diffusion_on
+# (independent DynON/DynOFF master switch, forwarded to whichever scheme is picked).
+run_droplet_diffusion!(::NoDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) = nothing
+run_droplet_diffusion!(::OUDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
+    turbulent_droplet_diffusion!(onoff, l, droplets, grid, tke, dt)
+run_droplet_diffusion!(::WellMixedDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
+    turbulent_droplet_diffusion_wellmixed!(onoff, l, droplets, grid, tke, dt)
+run_droplet_diffusion!(::WeilDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
+    weil_turbulent_droplet_diffusion!(onoff, l, droplets, grid, tke, dt, e_prev)
+run_droplet_diffusion!(::VisserDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
+    turbulent_droplet_diffusion_visser!(onoff, droplets, grid, K_h, dt)
 
 function stochastic_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}, K_centers::Vector{FT}, dt::FT, dz::FT, nz::Int) where FT
     # discrete 1D Monte Carlo analogue of Eulerian K-diffusion: each superdroplet (its full
