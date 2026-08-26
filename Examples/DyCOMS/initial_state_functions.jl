@@ -215,15 +215,15 @@ function plot_output_timeseries(grid;tskips = 14)
         # cloud_lwc_profile = grid.output.cloud_LWC[:,i]
         # cloud_base_idx = findfirst(cloud_lwc_profile[5:end] .> 0.1/1000)
         # cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx+4]        
-        n_prof = grid.output.number[:,i]
+        n_prof = grid.output.cloud_number[:,i]
         cloud_base_idx = findfirst(n_prof[5:end] .> 0)
         cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx]
     end
     p10 = plot(time, inv_height, xlabel="Time (h)", ylabel="Inversion Height (m)", label="z_inv")
     p10 = plot!(time, cloud_base_height, xlabel="Time (h)", ylabel="Height (m)", label="z_cb")
     # p11 = plot(grid.output.condensation_rad_net[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="dqv[g/kg•s]", title="rad cond dqv", legend=false)
-    meancloudnumber = [let col = filter(>(0), grid.output.number[:,t]); isempty(col) ? 0.0 : mean(col); end for t in axes(grid.output.number, 2)]
-    p11 = plot(time,meancloudnumber*1e-6/50, ylabel="n_c [cm-3]", xlabel="", title="Time (h)", legend=false)
+    meancloudnumber = [let col = filter(>(0), grid.output.cloud_number[:,t]); isempty(col) ? 0.0 : mean(col); end for t in axes(grid.output.cloud_number, 2)]
+    p11 = plot(time,meancloudnumber*1e-6, ylabel="n_c [cm-3]", xlabel="", title="Time (h)", legend=false)
     
     condensation_time_series = sum(grid.output.condensation_src, dims=1)'
     condensation_time_series_rad_net = sum(grid.output.condensation_rad_net, dims=1)'
@@ -325,7 +325,7 @@ function plot_ensemble_timeseries(rad_output, base_output, ref_grid)
 
     function cloud_layer_heights(output_dict, seeds)
         qt_arr  = cat([output_dict[s].ql  .+ output_dict[s].qv for s in seeds]..., dims=3)
-        num_arr = cat([output_dict[s].number for s in seeds]..., dims=3)
+        num_arr = cat([output_dict[s].cloud_number for s in seeds]..., dims=3)
         inv_h = zeros(n_t); cb_h = fill(NaN, n_t)
         for t in 1:n_t
             qt_med  = [median(qt_arr[z,  t, :]) for z in axes(qt_arr,  1)]

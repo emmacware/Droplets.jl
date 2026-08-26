@@ -266,12 +266,22 @@ penv = plot_env_profiles(grid)
 # #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid),plot_title="REM: $(scmsettings.REM)")#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
 
-num = ensemble_output[(false, n0,1)].number * 1e-6/50
+num = ensemble_output[(false, n0,1)].cloud_number * 1e-6
 nummasked = ifelse.(num .< 20, NaN, num)
 heatmap(nummasked,clims=(0,100))
 
 plot()
-plot_ensemble_field(:number, ensemble_output, grid; key_filter=(false, n0),   scale=1e-6/50, axis=:height, show_ribbon=false, t_window=(0,1), label="", color=:darkturquoise,  linestyle=:dot,   linewidth=2)
+plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),   scale=1e-6, axis=:height, show_ribbon=false,
+    t_window=(4,5), label="", color=:darkturquoise,
+    linestyle=:dot,   linewidth=2)
+
+plot()
+twindow = (0,1)
+plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),
+    scale=1e-6, axis=:height, show_ribbon=false,
+    t_window=twindow, label=twindow,
+    linestyle=:dot,   linewidth=2)
+heatmap(grid.output.cloud_number)
 
 
 tCpR = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : mean(v) end, nummasked, dims=1)

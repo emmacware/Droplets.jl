@@ -13,8 +13,15 @@ struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     ρ::Vector{FT}
     e::Vector{FT}   # turbulent kinetic energy (m²/s²)
     eps::Vector{FT} # TKE dissipation rate (m²/s³)
+    qt_tmp::Vector{FT}
+    θl_tmp::Vector{FT}
     droplets::droplet_attributes_1d{FT}
     spatial::spatial_settings_1d{FT}
+    # extra vars
+    # P_dry::Vector{FT}
+    # ρ_dry::Vector{FT}
+    # θ_dry::Vector{FT}
+
 end
 
 
@@ -33,6 +40,9 @@ struct scm_diagnostics{FT<:AbstractFloat}
     aerosol_LWC::Vector{FT}
     cloud_LWC::Vector{FT}
     rain_LWC::Vector{FT}
+    aerosol_number::Vector{FT}
+    cloud_number::Vector{FT}
+    rain_number::Vector{FT}
 end
 
 struct scm_outputs{FT<:AbstractFloat}
@@ -58,7 +68,9 @@ struct scm_outputs{FT<:AbstractFloat}
     condensation_rad_net::Matrix{FT}
     condensation_rad_abs::Matrix{FT}
     cloud_heating_rate::Matrix{FT}
-    number::Matrix{FT}
+    aerosol_number::Matrix{FT}
+    cloud_number::Matrix{FT}
+    rain_number::Matrix{FT}
 
     surface_precipitation::Vector{FT}
     LWP::Vector{FT}
@@ -88,7 +100,9 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
     condensation_rad_net = zeros(FT, num_levels, n_output_steps)
     condensation_rad_abs = zeros(FT, num_levels, n_output_steps)
     cloud_heating_rate = zeros(FT, num_levels, n_output_steps)  
-    nconcentration = zeros(FT, num_levels, n_output_steps) 
+    aconcentration = zeros(FT, num_levels, n_output_steps) 
+    cconcentration = zeros(FT, num_levels, n_output_steps) 
+    rconcentration = zeros(FT, num_levels, n_output_steps) 
 
     surface_precipitation = zeros(FT, n_output_steps)
     LWP = zeros(FT, n_output_steps)
@@ -101,7 +115,9 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
         condensation_rad_net,
         condensation_rad_abs,
         cloud_heating_rate,
-        nconcentration,
+        aconcentration,
+        cconcentration,
+        rconcentration,
         surface_precipitation,
         LWP
         )
@@ -119,17 +135,20 @@ struct scm_eulerian_arrays{FT<:AbstractFloat}
     output::scm_outputs{FT}
 end
 
-function create_scm_grids(num_levels::Int, dz::FT,droplets::droplet_attributes_1d;spatial::Union{spatial_settings_1d,Nothing}=nothing,output::Union{scm_outputs,Nothing}=nothing) where {FT<:AbstractFloat}
+function create_scm_grids(num_levels::Int, dz::FT,droplets::droplet_attributes_1d;spatial::Union{spatial_settings_1d,Nothing}=nothing,
+    output::Union{scm_outputs,Nothing}=nothing) where {FT<:AbstractFloat}
     faces_z = collect(0:dz:(num_levels)*dz)
     centers_z = collect(dz/2:dz:((num_levels-1)*dz + dz/2))
     wind = scm_wind{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels+1))
     diagnostics = scm_diagnostics{FT}(zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),
+        zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels),
         zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels))
     if spatial == nothing
         spatial = spatial_settings_1d{FT}(Nz=num_levels, z_grid_height=dz, Z_max=num_levels*dz)
     end
     states = scm_states{FT}(num_levels,zeros(FT,num_levels),zeros(FT,num_levels+1), zeros(FT,num_levels), 
-        zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels), zeros(FT,num_levels),zeros(FT,num_levels), droplets,spatial)
+        zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels), zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels),
+        zeros(FT,num_levels), droplets,spatial)
     if output == nothing
         output = scm_outputs(num_levels, spatial.t_max, spatial.dt_output)
     end
