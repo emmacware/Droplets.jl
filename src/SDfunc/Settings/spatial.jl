@@ -79,6 +79,7 @@ struct scm_settings{FT<:AbstractFloat, Thr, Sch,
     Δt::FT
     n_cond::Int
     n_coag::Int
+    n_rad::Int
     spinup_time::FT
     turbulence::Turb
     condensation::Cond
@@ -104,6 +105,7 @@ function scm_settings{FT}(;
         Δt::FT                            = FT(1.0),
         n_cond::Int                       = Int(10),
         n_coag::Int                       = Int(10),
+        n_rad::Int                        = Int(1),
         spinup_time::FT                   = FT(3600.0),
         turbulence::Dynamic               = DynON(),
         condensation::Dynamic             = DynON(),
@@ -127,7 +129,7 @@ function scm_settings{FT}(;
         typeof(settling), typeof(advection), typeof(recycling),
         typeof(top_escape), typeof(thermo_feedback), typeof(turbulent_droplet_diffusion_on),
         typeof(keep_grid_filled), typeof(droplet_diffusion_scheme)}(
-        init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, spinup_time,
+        init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, n_rad, spinup_time,
         turbulence, condensation, REM, motion, spinupsaturation, radiation,
         coalescence, settling, advection, recycling, top_escape, thermo_feedback,
         turbulent_droplet_diffusion_on, keep_grid_filled, droplet_diffusion_scheme)

@@ -221,27 +221,30 @@ function plot_output_timeseries(grid;tskips = 14)
         # cloud_base_idx = findfirst(cloud_lwc_profile[5:end] .> 0.1/1000)
         # cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx+4]        
         n_prof = grid.output.cloud_number[:,i]
-        cloud_base_idx = findfirst(n_prof[5:end] .> 0)
+        cloud_base_idx = findfirst(n_prof[5:end].*1e-6 .> 20)
         cloud_base_height[i] = cloud_base_idx == nothing ? NaN : z_centers[cloud_base_idx]
     end
     p10 = plot(time, inv_height, xlabel="Time (h)", ylabel="Inversion Height (m)", label="z_inv")
     p10 = plot!(time, cloud_base_height, xlabel="Time (h)", ylabel="Height (m)", label="z_cb")
     # p11 = plot(grid.output.condensation_rad_net[:,1:t_skips:end]*1000, z_centers, ylabel="Height (m)", xlabel="dqv[g/kg•s]", title="rad cond dqv", legend=false)
-    meancloudnumber = [let col = filter(>(0), grid.output.cloud_number[:,t]); isempty(col) ? 0.0 : mean(col); end for t in axes(grid.output.cloud_number, 2)]
-    p11 = plot(time,meancloudnumber*1e-6, ylabel="n_c [cm-3]", xlabel="", title="Time (h)", legend=false)
-    
-    condensation_time_series = sum(grid.output.condensation_src, dims=1)'
-    condensation_time_series_rad_net = sum(grid.output.condensation_rad_net, dims=1)'
-    condensation_time_series_rad_abs = sum(grid.output.condensation_rad_abs, dims=1)'
-    if maximum(time) >1
-        spinuptimeidx = findfirst(time .> 1)
-        p12 = plot(time[spinuptimeidx:end],condensation_time_series[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="total")
-        p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_net[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="radiation")
-        # p12 = plot!(time[spinuptimeidx:end],condensation_time_series_rad_abs[spinuptimeidx:end]*3600*1000, xlabel="Time (h)", ylabel="dqv[g/kg•hr]", title="cond dqv", label="Rad Abs")
-    else
-        p12 = plot(time,condensation_time_series*3600, xlabel="Time (h)", ylabel="Condensation Mass Source (kg/m3/hr)", title="Condensation Mass Source", label="Mass")
-    end
-    tplot = plot(p1, p2,p7,p8, p3, p4,p5,p6,p9,p10,p11,p12, layout=(4,3), size=(900,900))
+    # meancloudnumber = [let col = filter(>(0), grid.output.cloud_number[:,t]); isempty(col) ? 0.0 : mean(col); end for t in axes(grid.output.cloud_number, 2)]
+    p11 = plot(grid.output.cloud_number[:,1:t_skips:end]*1e-6,z_centers, xlabel="n_c [cm-3]", ylabel="z(m)", title="cloud number", legend=false)
+    p12 = plot(grid.output.u[:,1], z_centers, ylabel="z (m)", xlabel="wind (m/s)", title="Wind (last t)", label="u")
+    p12 = plot!(grid.output.v[:,1], z_centers, label="v")
+    p12 = plot!(grid.output.u[:,end], z_centers, ylabel="z (m)", xlabel="wind (m/s)", title="Wind (last t)", label="u")
+    p12 = plot!(grid.output.v[:,end], z_centers, label="v")
+    p13 = plot(grid.output.mixing_length[:,1:t_skips:end], z_centers, ylabel="z (m)", xlabel="l (m)", title="Mixing Length", legend=false)
+
+    p14 = plot(grid.output.K_m[:,end], z_centers, ylabel="z (m)", xlabel="K [m2/s]", title="Diffusivities (last t)", label="K_m")
+    p14 = plot!(grid.output.K_h[:,end], z_centers, label="K_h")
+    p14 = plot!(grid.output.K_e[:,end], z_centers, label="K_e")
+
+    p15 = plot(grid.output.shear_production[:,end]*3600, z_centers, ylabel="z (m)", xlabel="[m2/s2 / hr]", title="TKE Budget (last t)", label="Shear Prod")
+    p15 = plot!(grid.output.buoyancy_production[:,end]*3600, z_centers, label="Buoyancy Prod")
+    p15 = plot!(-grid.output.eps[:,end]*3600, z_centers, label="-Dissipation")
+    p15 = plot!(grid.output.transport[:,end]*3600, z_centers, label="Transport")
+
+    tplot = plot(p1, p2,p7,p8, p3, p4,p5,p6,p9,p10,p11,p12, p13,p14,p15, layout=(5,3), size=(900,1100))
     return tplot
 end
 

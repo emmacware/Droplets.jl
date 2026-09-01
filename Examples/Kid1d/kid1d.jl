@@ -3,6 +3,7 @@ using Droplets
 using OrdinaryDiffEq
 using Plots
 using Distributions
+using Interpolations
 using Random
 
 include("../DyCOMS/radiation_call.jl")
@@ -63,7 +64,8 @@ coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_p
 
 condensationsettings = condensation_settings{FT}(kappa=kappa_kid,ρ_solute = ammonium_sulfate_density,Δt=dt_cond)
 
-mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=Extrapolated(),infinite_gauge=true)
+mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=Extrapolated(),infinite_gauge=true,
+        thermo_variable = ThetalQtVar())
 
 tkesettings = tke_settings{FT}()#u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v,
     #LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux)
@@ -82,6 +84,8 @@ base_scm = (
     n_coag                      = round(Int, dt / dt_coag),
     spinup_time                 = 0.0,
     turbulent_droplet_diffusion_on = DynOFF(),
+    keep_grid_filled            = DynOFF(), # disable donor-cell SD reseeding of thin layers
+
 )
 
 # scmspinupsettings = scm_settings{FT}(; base_scm...,
@@ -107,7 +111,15 @@ grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_en
     coagsettings,spatialsettings,condensationsettings,tkesettings,constants
     )
 
-# absliq_r_interp = 0.0
+CArad = raddata.CArad
+R_array = range(CArad.lookup_lw_cld.bounds[1], CArad.lookup_lw_cld.bounds[2],
+                length=CArad.lookup_lw_cld.dims[3])  # μm
+
+const absliq_r_interp = ntuple(CArad.nband_lw) do ibnd
+    ext, ssa, _ = LookUpTables.getview_liqdata(CArad.lookup_lw_cld, ibnd)
+    absliq = collect(ext .* (1 .- ssa))
+    linear_interpolation(R_array, absliq, extrapolation_bc=Flat())
+end
 
 
 for i in 1:Int(spatialsettings.t_max / dt)
@@ -163,7 +175,7 @@ l = @layout [a b c{0.05w}]
 plot(p1, p2, cbar, layout=l, size=(900,400),plot_title="K1D Droplets.jl ",
 left_margin=3Plots.mm, bottom_margin=3Plots.mm,top_margin=3Plots.mm)
 
-# savefig("DropletsKid1d_LWC_heatmaps.pdf")
+savefig("DropletsKid1d_LWC_heatmaps.pdf")
 
 # heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
 # grid.output.rain_LWC,color=:viridis,clims=(0,1.5e-3))

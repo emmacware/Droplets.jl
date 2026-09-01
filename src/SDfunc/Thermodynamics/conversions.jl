@@ -1,7 +1,7 @@
 
 export calc_θ_dry, calc_ρ_dry_from_ρ, calc_T#, calc_p
 export theta_from_T, T_virtual, T_from_theta, ρ_ideal_gas, ρ_calc_θ,ρ_calc_θ!
-export compute_ql_at_cell!,θl,θ_from_θl
+export compute_ql_at_cell!,compute_ql_all_cells!,θl,θ_from_θl
 #_θ, θl
 export mixing_ratio, specific_humidity
 export theta_from_T!, ρ_ideal_gas!, T_from_theta!
@@ -78,6 +78,23 @@ function compute_ql_at_cell!(state, k, constants)
         s += state.droplets.X[j] * state.droplets.ξ[j]
     end
     state.ql_tmp[k] = s * constants.ρl / (state.ρ[k] * state.spatial.area_per_grid * state.spatial.z_grid_height)
+end
+
+# Single O(N) pass over droplets.cell_id instead of compute_ql_at_cell! per cell over
+# grid_range — skips the full sort in fill_grid_ranges! when nothing else needs
+# grid_range to be valid at this point in the timestep.
+function compute_ql_all_cells!(state, constants)
+    ql = state.ql_tmp
+    fill!(ql, zero(eltype(ql)))
+    droplets = state.droplets
+    nz = length(ql)
+    @inbounds for i in droplets.I
+        k = droplets.cell_id[i]
+        (k < 1 || k > nz) && continue
+        ql[k] += droplets.X[i] * droplets.ξ[i]
+    end
+    scale = constants.ρl / (state.spatial.area_per_grid * state.spatial.z_grid_height)
+    @. ql = ql * scale / state.ρ
 end
 
 

@@ -51,7 +51,7 @@ function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid::scm_eulerian_
     end
 end
 
-function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata::coagulation_run_spatial,conddata::condensation_data,raddata::Rad,spatial::spatial_settings_1d,constants::Constants{FT}, t::Int) where {FT,Rad}
+function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata::coagulation_run_spatial,conddata::condensation_data,raddata::Rad,spatial::spatial_settings_1d,constants::Constants{FT}, t::Int, turbdata::turbulence_data) where {FT,Rad}
     grid.output.P[:,t] .= grid.states.P
     grid.output.qv[:,t] .= grid.states.qv
     compute_ql_at_cell!.(grid.states, 1:grid.nz,constants)
@@ -82,6 +82,17 @@ function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata::coag
     conddata.condensation_rad_abs .= 0.0
     grid.output.cloud_heating_rate[:,t] .= raddata.cloud_heating_delta / spatial.dt_output
     raddata.cloud_heating_delta .= 0.0
+    grid.output.mixing_length[:,t] .= turbdata.l
+    grid.output.SM[:,t] .= turbdata.SM
+    grid.output.SH[:,t] .= turbdata.SH
+    grid.output.GM[:,t] .= turbdata.GM
+    grid.output.GH[:,t] .= turbdata.GH
+    grid.output.K_h[:,t] .= turbdata.K_h
+    grid.output.K_m[:,t] .= turbdata.K_m
+    grid.output.K_e[:,t] .= turbdata.K_e
+    grid.output.shear_production[:,t] .= turbdata.shear_production
+    grid.output.buoyancy_production[:,t] .= turbdata.buoyancy_production
+    grid.output.transport[:,t] .= turbdata.transport
     grid.output.LWP[t] = sum(grid.diagnostics.cloud_LWC .+ grid.diagnostics.rain_LWC) * spatial.z_grid_height
     # fillnum!(grid,t)
     # grid.output.surface_precipitation[t] done elsewhere

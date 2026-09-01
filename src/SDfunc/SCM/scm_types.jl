@@ -72,6 +72,19 @@ struct scm_outputs{FT<:AbstractFloat}
     cloud_number::Matrix{FT}
     rain_number::Matrix{FT}
 
+    # Turbulence budget terms (turbulence_data snapshot at each output step)
+    mixing_length::Matrix{FT}      # l
+    SM::Matrix{FT}                 # MY82 momentum stability function
+    SH::Matrix{FT}                 # MY82 heat stability function
+    GM::Matrix{FT}                 # dimensionless shear
+    GH::Matrix{FT}                 # dimensionless buoyancy
+    K_h::Matrix{FT}                # eddy diffusivity, scalars
+    K_m::Matrix{FT}                # eddy diffusivity, momentum
+    K_e::Matrix{FT}                # eddy diffusivity, TKE
+    shear_production::Matrix{FT}   # m²/s³
+    buoyancy_production::Matrix{FT}# m²/s³
+    transport::Matrix{FT}          # m²/s³
+
     surface_precipitation::Vector{FT}
     LWP::Vector{FT}
 end
@@ -100,9 +113,21 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
     condensation_rad_net = zeros(FT, num_levels, n_output_steps)
     condensation_rad_abs = zeros(FT, num_levels, n_output_steps)
     cloud_heating_rate = zeros(FT, num_levels, n_output_steps)  
-    aconcentration = zeros(FT, num_levels, n_output_steps) 
-    cconcentration = zeros(FT, num_levels, n_output_steps) 
-    rconcentration = zeros(FT, num_levels, n_output_steps) 
+    aconcentration = zeros(FT, num_levels, n_output_steps)
+    cconcentration = zeros(FT, num_levels, n_output_steps)
+    rconcentration = zeros(FT, num_levels, n_output_steps)
+
+    mixing_length = zeros(FT, num_levels, n_output_steps)
+    SM = zeros(FT, num_levels, n_output_steps)
+    SH = zeros(FT, num_levels, n_output_steps)
+    GM = zeros(FT, num_levels, n_output_steps)
+    GH = zeros(FT, num_levels, n_output_steps)
+    K_h = zeros(FT, num_levels, n_output_steps)
+    K_m = zeros(FT, num_levels, n_output_steps)
+    K_e = zeros(FT, num_levels, n_output_steps)
+    shear_production = zeros(FT, num_levels, n_output_steps)
+    buoyancy_production = zeros(FT, num_levels, n_output_steps)
+    transport = zeros(FT, num_levels, n_output_steps)
 
     surface_precipitation = zeros(FT, n_output_steps)
     LWP = zeros(FT, n_output_steps)
@@ -118,6 +143,7 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
         aconcentration,
         cconcentration,
         rconcentration,
+        mixing_length, SM, SH, GM, GH, K_h, K_m, K_e, shear_production, buoyancy_production, transport,
         surface_precipitation,
         LWP
         )
@@ -189,7 +215,10 @@ struct turbulence_data{FT<:AbstractFloat}
     K_h::Vector{FT} # diffusivity for scalars
     K_m::Vector{FT} # diffusivity for momentum
     K_e::Vector{FT} # diffusivity for TKE
-    du::Vector{FT} # 
+    shear_production::Vector{FT}    # SM*GM*q³/l (m²/s³)
+    buoyancy_production::Vector{FT} # SH*GH*q³/l (m²/s³)
+    transport::Vector{FT}           # vertical eddy diffusion of e, (e_post_diffuse - e_pre)/dt (m²/s³)
+    du::Vector{FT} #
     dv::Vector{FT} #
     a::Vector{FT} # sub-diagonal for implicit diffusion
     b::Vector{FT} # main diagonal for implicit diffusion
@@ -207,6 +236,9 @@ struct turbulence_data{FT<:AbstractFloat}
         K_h = zeros(FT, num_levels)
         K_m = zeros(FT, num_levels)
         K_e = zeros(FT, num_levels)
+        shear_production = zeros(FT, num_levels)
+        buoyancy_production = zeros(FT, num_levels)
+        transport = zeros(FT, num_levels)
         du = zeros(FT, num_levels)
         dv = zeros(FT, num_levels)
         a = zeros(FT, num_levels)   # sub-diagonal for implicit diffusion
@@ -215,7 +247,7 @@ struct turbulence_data{FT<:AbstractFloat}
         d = zeros(FT, num_levels)   # right-hand side for implicit diffusion
         rhs = zeros(FT, num_levels) # copy of field being diffused for implicit diffusion
         K_faces = zeros(FT, num_levels+1) # diffusivity at faces
-        return new{FT}(l, SM, SH, GM, GH, K_h, K_m, K_e, du, dv, a, b, c, d, rhs, K_faces)
+        return new{FT}(l, SM, SH, GM, GH, K_h, K_m, K_e, shear_production, buoyancy_production, transport, du, dv, a, b, c, d, rhs, K_faces)
     end
 end
 

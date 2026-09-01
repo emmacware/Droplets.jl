@@ -31,7 +31,9 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     K_h .= 0
     K_m .= 0
     K_e .= 0
-    
+    turbdata.shear_production .= 0
+    turbdata.buoyancy_production .= 0
+
     e_prev = grid.states.e .+ 0
 
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
@@ -48,8 +50,13 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
 
     diffuse_fields!(grid, tke, K_h,K_m,K_e,constants, dt,turbdata)
 
+    # e is untouched between e_prev above and here (diffuse_fields! is the only thing
+    # that changes it before tke_update!'s production/dissipation update), so this is
+    # exactly the vertical-transport tendency of the TKE budget.
+    turbdata.transport .= (grid.states.e .- e_prev) ./ dt
+
     # apply_counter_gradient!(grid, tke, K_h, constants, dt)
-    tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
+    tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants, turbdata)
 
 end
 
@@ -65,19 +72,19 @@ end
 # Diffuses the thermodynamic pair diffuse_fields! is asked to use (tke.thermo_variable):
 # either (θ_l, qt) -- the conserved-under-phase-change pair, reconstructing θ/qv from
 # the diffused θ_l/qt + the (pre-diffusion) ql afterward -- or (θ, qv) directly.
-function diffuse_thermo!(::ThetalQtVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
-    implicit_diffuse!(grid.states.θl_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
+function diffuse_thermo!(::ThetalQtVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants, ρ_arg)
+    implicit_diffuse!(grid.states.θl_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux, ρ = ρ_arg)
     grid.states.θ .= θ_from_θl.(grid.states.P,grid.states.θl_tmp,grid.states.ql_tmp,grid.states.qv,constants)
 
-    implicit_diffuse!(grid.states.qt_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    implicit_diffuse!(grid.states.qt_tmp, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]), ρ = ρ_arg)
     grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
 end
 
-function diffuse_thermo!(::ThetaQvVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
-    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux)
+function diffuse_thermo!(::ThetaQvVar, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants, ρ_arg)
+    implicit_diffuse!(grid.states.θ, K_h, dt, dz, nz,turbdata, sfc_flux = theta_surf_flux, ρ = ρ_arg)
 
     # grid.states.qv .+= grid.states.ql_tmp
-    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]))
+    implicit_diffuse!(grid.states.qv, K_h, dt, dz, nz,turbdata, sfc_flux = tke.LHF / (constants.L*grid.states.ρ[1]), ρ = ρ_arg)
     # grid.states.qv .-= grid.states.ql_tmp
     grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
     grid.states.θl_tmp .= θl.(grid.states.P,grid.states.θ,grid.states.qt_tmp,grid.states.qv,constants)
@@ -95,10 +102,12 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     surface_meridional_momentum_flux = - grid.wind.v[1]*tke.u_star^2 / spd
     theta_surf_flux = tke.SHF / (grid.states.ρ[1] * constants.Cp_air * (grid.states.P[1]/constants.P0)^(constants.Rd / constants.Cp_air))
 
-    diffuse_thermo!(tke.thermo_variable, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants)
+    ρ_arg = tke.density_weighted_diffusion ? grid.states.ρ : nothing
 
-    implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux)
-    implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux)
+    diffuse_thermo!(tke.thermo_variable, grid, tke, K_h, dt, dz, nz, turbdata, theta_surf_flux, constants, ρ_arg)
+
+    implicit_diffuse!(grid.wind.u,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_zonal_momentum_flux, ρ = ρ_arg)
+    implicit_diffuse!(grid.wind.v,  K_m, dt, dz, nz,turbdata, sfc_flux = surface_meridional_momentum_flux, ρ = ρ_arg)
 
     ρ_calc_θ!(grid.states.ρ,grid.states.P, grid.states.θ, grid.states.qv, constants)
 
@@ -113,7 +122,7 @@ function diffuse_fields!(grid,tke, K_h,K_m,K_e, constants, dt,turbdata)
     grid.wind.v .+= turbdata.dv .* dt
 
 
-    implicit_diffuse!(grid.states.e, K_e, dt, dz, nz,turbdata, sfc_flux=2.5 * tke.u_star^3)
+    implicit_diffuse!(grid.states.e, K_e, dt, dz, nz,turbdata, sfc_flux=2.5 * tke.u_star^3, ρ = ρ_arg)
     grid.states.e .= max.(grid.states.e, 0.0)
 
 end
@@ -154,7 +163,7 @@ function bott_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, constan
 
         end
         lf = tke.vk * z * l0 / (tke.vk * z + l0)
-        l[k] = max(lf, dz)
+        l[k] = k == 1 ? lf : max(lf, dz)
     end
 end
 
@@ -201,7 +210,7 @@ function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, consta
         # (no tke_exch term -- that's an EDMF updraft/environment exchange concept
         # with no single-column counterpart)
         N2 = calculate_buoyancy_frequency(grid, k, constants, dry=false)
-        S2 = S2_flow_deformation(grid, k, constants)
+        S2 = S2_flow_deformation(grid, k, constants, tke)
         sqrt_e = sqrt(e)
         a_pd = tke.c_m * (S2 - N2) * sqrt_e   # Pr_t = 1 simplification
         l_TKE = a_pd > eps(FT) ? sqrt(tke.c_d * e * sqrt_e / a_pd) : zero(FT)
@@ -212,7 +221,11 @@ function edmfx_mixing_length!(l::Vector{FT}, grid, tke::tke_settings{FT}, consta
             l_N = min(sqrt(tke.c_b * e) / sqrt(N2), z)
         end
 
-        l[k] = max(min(l_W, l_TKE > 0 ? l_TKE : l_W, l_N), dz)
+        # Floor at dz away from the surface (numerical regularization for degenerate
+        # stable layers), but at min(dz,z) near the surface so l can shrink toward its
+        # physical κz falloff (l_W→0 as z→0) instead of being forced up to a full grid
+        # spacing at z<dz.
+        l[k] = max(min(l_W, l_TKE > 0 ? l_TKE : l_W, l_N), min(dz, z))
     end
 end
 
@@ -239,7 +252,7 @@ function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT}
     q      = sqrt(2 * max(grid.states.e[k], tke.e_min))
     # N2  = calculate_buoyancy_frequency(grid, k, constants, dry=false)
     # N2 = moist_buoyancy_frequency(grid, k, constants)
-    S2  = S2_flow_deformation(grid, k, constants)
+    S2  = S2_flow_deformation(grid, k, constants, tke)
     l2_2e = l[k]^2 / q^2
 
     # GH[k]  = - l2_2e * N2
@@ -271,7 +284,7 @@ end
 
 # end
 
-function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
+function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants, turbdata::turbulence_data)
     nz = grid.nz
     dz = grid.dz
 
@@ -296,10 +309,14 @@ function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants)
     for k in 1:nz
         # q = sqrt(2 * max(grid.states.e[k], tke.e_min))
         q         = sqrt(2 * grid.states.e[k])
-        prod      = (SM[k] * GM[k] + SH[k] * GH[k]) * q^3 / l[k]
+        turbdata.shear_production[k]    = SM[k] * GM[k] * q^3 / l[k]
+        turbdata.buoyancy_production[k] = SH[k] * GH[k] * q^3 / l[k]
+        prod      = turbdata.shear_production[k] + turbdata.buoyancy_production[k]
         diss_rate = tke.my_diss * 2 * q / l[k]   # s⁻¹ = ε/e
         # grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), tke.e_min)
-        grid.states.e[k] = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
+        e_new = max((grid.states.e[k] + dt * prod) / (1 + dt * diss_rate), zero(eltype(l)))
+        grid.states.eps[k] = diss_rate * e_new   # ε = (ε/e)*e [m²/s³]
+        grid.states.e[k] = e_new
     end
     # grid.states.e .= max.(grid.states.e, tke.e_min)
 
@@ -309,26 +326,33 @@ end
 
 
 function bott1997term(grid, k, constants)
-    FT  = eltype(grid.states.θ)
     nz  = grid.nz
     dz  = grid.dz
-    kp  = min(k + 1, nz)
-    km  = max(k - 1, 1)
-    dz_eff = (k == 1 || k == nz) ? dz : 2.0 * dz
 
-    # θl_k  = θl(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
-    # θl_kp = θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
-    # θl_km = θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
-    θl_k  = grid.states.θl_tmp[k]#(grid.states.P[k],  grid.states.T_tmp[k],  grid.states.ql_tmp[k],grid.states.qv[k],  constants)
-    θl_kp = grid.states.θl_tmp[kp]#θl(grid.states.P[kp], grid.states.T_tmp[kp], grid.states.ql_tmp[kp],grid.states.qv[kp], constants)
-    θl_km = grid.states.θl_tmp[km]#θl(grid.states.P[km], grid.states.T_tmp[km], grid.states.ql_tmp[km],grid.states.qv[km], constants)
+    θl_arr = grid.states.θl_tmp
+    qv_arr = grid.states.qv
+    ql_arr = grid.states.ql_tmp
+    qt(i)  = qv_arr[i] + ql_arr[i]
 
-    dθldz_k = (θl_kp - θl_km) / dz_eff
-    qt_k  = grid.states.qv[k]  + grid.states.ql_tmp[k]
-    qt_kp = grid.states.qv[kp] + grid.states.ql_tmp[kp]
-    qt_km = grid.states.qv[km] + grid.states.ql_tmp[km]
-    dqtdz_k = (qt_kp - qt_km) / dz_eff
+    sm3(arr, i) = (arr(max(i-1,1)) + arr(i) + arr(min(i+1,nz))) / 3
 
+    θl_k  = θl_arr[k]
+
+    if k == 1
+        # Second-order one-sided (3-point, forward) difference, actually centered at
+        # z_1 itself -- see S2_flow_deformation for why the plain (φ[2]-φ[1])/dz form
+        # is really centered at the face z_1+dz/2, not at the cell-1 location.
+        dθldz_k = (-3*sm3(i->θl_arr[i],1) + 4*sm3(i->θl_arr[i],2) - sm3(i->θl_arr[i],3)) / (2*dz)
+        dqtdz_k = (-3*sm3(qt,1) + 4*sm3(qt,2) - sm3(qt,3)) / (2*dz)
+    elseif k == nz
+        dθldz_k = (3*sm3(i->θl_arr[i],nz) - 4*sm3(i->θl_arr[i],nz-1) + sm3(i->θl_arr[i],nz-2)) / (2*dz)
+        dqtdz_k = (3*sm3(qt,nz) - 4*sm3(qt,nz-1) + sm3(qt,nz-2)) / (2*dz)
+    else
+        dθldz_k = (sm3(i->θl_arr[i],k+1) - sm3(i->θl_arr[i],k-1)) / (2*dz)
+        dqtdz_k = (sm3(qt,k+1) - sm3(qt,k-1)) / (2*dz)
+    end
+
+    qt_k = qt(k)
     ql   = grid.states.ql_tmp[k]
     T    = grid.states.T_tmp[k]
     θ    = grid.states.θ[k]

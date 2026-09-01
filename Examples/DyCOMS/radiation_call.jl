@@ -222,8 +222,8 @@ function fill_liquid_water_diagnostics(grid::scm_eulerian_arrays{FT}, diagnostic
     return nothing
 end
 
-function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
-    
+function compute_radiative_fluxes!(grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data)::Nothing where FT<:AbstractFloat
+
     #Some things to consider:
     #1. Do we want incoming downwelling LW?
     #2. Or, do we want to specify the atmosphere above the model top just for radiation?
@@ -278,18 +278,6 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
 
     compute_gray_heating_rate!(device,raddata.hr_lay,as.p_lev,ncol,nlay,raddata.flux_net,cp_d_,grav_)
 
-    hr = @view raddata.hr_lay[1:nz,1]
-
-
-    grid.states.T_tmp .+= dt .* hr 
-    raddata.cloud_heating_delta .+= dt .* hr
-
-    # grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
-    # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
-    theta_from_T!(grid.states.θ, grid.states.T_tmp, grid.states.P,grid.states.qv, constants)
-    ρ_ideal_gas!(grid.states.ρ, grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
-
-    
     ##Add in other updates
     t_planck  = CArad.lookup_lw.planck.t_planck
     tot_planck = CArad.lookup_lw.planck.tot_planck
@@ -306,12 +294,38 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
          end
     end
 
-
-    return nothing#flux_net_droplet
+    return nothing
 end
 
-function radiation_function!(::DynOFF,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, 
-    diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int)::Nothing where FT<:AbstractFloat
+# Applies the last-computed radiative heating rate (raddata.hr_lay) to T/θ/ρ for one
+# timestep. Runs every step regardless of whether compute_radiative_fluxes! ran this
+# step, so the RTE solve can be called at a coarser cadence than dt (see n_rad in
+# scm_settings) while the heating tendency itself is still integrated at dt.
+function apply_radiative_heating!(grid::scm_eulerian_arrays{FT}, raddata::radiation_data, constants::Constants{FT}, dt::FT)::Nothing where FT<:AbstractFloat
+    nz = grid.nz
+    hr = @view raddata.hr_lay[1:nz,1]
+
+    grid.states.T_tmp .+= dt .* hr
+    raddata.cloud_heating_delta .+= dt .* hr
+
+    theta_from_T!(grid.states.θ, grid.states.T_tmp, grid.states.P,grid.states.qv, constants)
+    ρ_ideal_gas!(grid.states.ρ, grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
+
+    return nothing
+end
+
+function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
+    if (i) % n_rad == 0 || i == 1
+        compute_radiative_fluxes!(grid, spatialsettings, diagnosticsettings, constants, raddata)
+    end
+
+    apply_radiative_heating!(grid, raddata, constants, dt)
+
+    return nothing
+end
+
+function radiation_function!(::DynOFF,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT},
+    diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
 end
 
 

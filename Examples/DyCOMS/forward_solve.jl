@@ -26,11 +26,11 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
     # or i = 1
     if i % n_output == 0 || i == 1
-        scm_fill_diagnostic_output(grid,coagdata,conddata,raddata,spatialsettings,constants, output_idx)
+        scm_fill_diagnostic_output(grid,coagdata,conddata,raddata,spatialsettings,constants, output_idx, turbdata)
     end
 
 
-    radiation_function!(scmsettings.radiation,grid, spatialsettings, diagnosticsettings, constants, raddata, dt, i)
+    radiation_function!(scmsettings.radiation,grid, spatialsettings, diagnosticsettings, constants, raddata, dt, i, scmsettings.n_rad)
 
 
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
@@ -55,8 +55,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # compute_ql_at_cell!.(grid.states, 1:nz,constants)
     # qt = grid.states.qv .+ grid.states.ql_tmp
     # θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
-    fill_grid_ranges!(droplets)
-    compute_ql_at_cell!.(grid.states, 1:nz,constants)
+    compute_ql_all_cells!(grid.states, constants)
     if tkesettings.thermo_variable isa ThetalQtVar
         # turbulent diffusion above ran on θl_tmp/qt_tmp (see diffuse_fields! in tke.jl);
         # reconstruct θ/qv from the diffused pair + the freshly recomputed ql. When
@@ -87,7 +86,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # for the next timestep regardless of which of these ran.
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
     recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)
-    keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants)
+    keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants, min_count = Int(floor(1.3 * coagsettings.Ns/spatialsettings.Nz)))
 
     fill_grid_ranges!(droplets)
 
@@ -184,9 +183,9 @@ function fill_grid_ranges!(droplets)
     end
 end
 
-function keep_layer_filled!(::DynOFF, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 250)
+function keep_layer_filled!(::DynOFF, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 100)
 end
-function keep_layer_filled!(::DynON, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 250)
+function keep_layer_filled!(::DynON, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 100)
     FT = eltype(droplets.X)
     fill_grid_ranges!(droplets)  # ensure ranges are current
     nz = length(droplets.grid_range)
