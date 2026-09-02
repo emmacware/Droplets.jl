@@ -46,6 +46,12 @@ Base.@kwdef struct Constants{FT<:AbstractFloat}
     # μ = FT(1.81e-5)         # Hall and Pruppracher 1976
     ϵ::FT = FT(Rd/Rv)           # 0.622 molar mass ratio vapor and air
     Ω::FT = FT(7.2921150e-5)     # Earth's rotation rate in radians per second
+    # false (default): θ/T Poisson relation uses total pressure P (standard
+    # meteorological convention -- matches case-spec θ values like DyCOMS-II RF02).
+    # true: uses dry partial pressure P_dry instead (PySDM/KiD dry-density
+    # convention) -- only correct when the initial state was itself built on
+    # ρ_dry/P_dry (see hydrostatic_pysdm in initialize_scm_environment).
+    dry_theta_convention::Bool = false
 end
 
 const constants = Constants{Float64}()

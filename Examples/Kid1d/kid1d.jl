@@ -12,6 +12,11 @@ include("../DyCOMS/forward_solve.jl")
 # using OrdinaryDiffEqBDF
 
 const FT = Float64
+# kid1d's initial state (ρ_dry/P_dry via hydrostatic_pysdm below) is built on the
+# dry-partial-pressure θ/T convention, so it needs its own `constants` rather than
+# the package default (which DyCOMS relies on staying on the standard, total-P
+# convention that matches its case-spec θ values). See conversions.jl.
+const kid_constants = Constants{FT}(dry_theta_convention=true)
 
 # ── Numerical settings ────────────────────────────────────────────────────────
 const Z_max = 3000.0   # m
@@ -32,7 +37,7 @@ const t_output =  60  # s
 r_initial(z) = z <= 740.0 ? 0.015 + (0.0138 - 0.015) * z / 740.0 :
                               0.0138 + (0.0024 - 0.0138) * (z - 740.0) / (3260.0 - 740.0)
 qv_initial(z) = specific_humidity(r_initial(z))
-θ_initial(z) = calc_θ_dry(constants, θ_std_initial(z), qv_initial(z))
+θ_initial(z) = calc_θ_dry(kid_constants, θ_std_initial(z), qv_initial(z))
 
 # ── KiD kinematic updraft: ρw = ρw₁ sin(πt/t₁) for t < t₁, else 0 ──────────
 const rho_times_w_1 = 3.0    # kg m⁻² s⁻¹
@@ -104,7 +109,7 @@ diagnosticsettings = diagnostic_settings()
 # Create environmnent
 grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
     nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), initial_aerosol_dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,constants;
+    coagsettings,spatialsettings,condensationsettings,tkesettings,kid_constants;
     deterministic_multiplicity=true, hydrostatic_pysdm=true
     )
 
@@ -130,13 +135,13 @@ for i in 1:Int(spatialsettings.t_max / dt)
     # grid.wind.w .= prescribed_w.(grid.centers_z)
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
     coagdata,conddata,raddata,turbdata,
-    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
+    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,kid_constants,scmsettings,tkesettings,absliq_r_interp,i)
 
 end
 
-penv = plot_env_profiles(grid)
+penv = plot_env_profiles(grid, kid_constants)
 #put tkesettings.turbulence_scheme in the title
-ptime = plot!(plot_output_timeseries(grid),tskips=20)#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
+ptime = plot!(plot_output_timeseries(grid; constants=kid_constants),tskips=20)#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
 
 # savefig("DyCOMS_SCMno_wprime.pdf")
 

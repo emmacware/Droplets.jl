@@ -102,8 +102,8 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
         grid.states.qv .= qt.(grid.centers_z)
         grid.states.ρ .= ρ_calc_θ.(grid.states.P,grid.states.θ,grid.states.qv,constants)
         grid.states.ρ_dry .= calc_ρ_dry_from_ρ.(grid.states.ρ, grid.states.qv)
-        grid.states.P_dry .= calc_P_dry_from_P.(grid.states.P, grid.states.qv, Ref(constants))
-        grid.states.θv .= θ_virtual.(grid.states.θ, grid.states.qv)
+        grid.states.P_dry .= calc_P_dry_from_P.(grid.states.P, grid.states.qv, constants)
+        grid.states.θv .= θ_virtual.(grid.states.θ, grid.states.qv,constants)
     end
     ρ_dry = grid.states.ρ_dry
 
@@ -224,7 +224,7 @@ function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
     return droplets
 end
 
-function plot_env_profiles(grid)
+function plot_env_profiles(grid, constants=Droplets.constants)
     compute_ql_at_cell!.(grid.states, 1:grid.nz,constants)
     ql = grid.states.ql_tmp
     grid.states.T_tmp .= T_from_theta.(grid.states.θ, grid.states.P,grid.states.qv, constants)
@@ -251,7 +251,7 @@ function plot_env_profiles(grid)
     return envplot
 end
 
-function plot_output_timeseries(grid;tskips = 14)
+function plot_output_timeseries(grid; tskips = 14, constants=Droplets.constants)
     time = grid.output.time ./ 3600
     t_skips = Int(floor(length(time)/5))
     z_centers = grid.centers_z

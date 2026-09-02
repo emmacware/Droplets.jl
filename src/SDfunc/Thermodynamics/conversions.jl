@@ -100,32 +100,45 @@ end
 @inline specific_humidity(r) = r / (1 + r)
 
 # -------------------------------------------------------
-# Old convention.. kept for reference and thermo concerns
-# θl(P,T,ql,q_vap,constants) = (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants))
-# θ_from_θl(P,θl_val,ql,q_vap,constants) = θl_val .+ (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* constants.L .* ql ./ Cp_m.(q_vap, constants)
-# theta_from_T(T,P,q_vap,constants) = T .* (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
-# theta_from_T!(θ, T, P, q_vap,constants) = @. θ = (T * (constants.P0 / P)^(R_m(q_vap, constants) / Cp_m(q_vap, constants)))
-# @inline T_from_theta(θ,P,q_vap,constants) = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
-# T_from_theta!(T, θ, P, q_vap,constants) = @. T = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
-# ρ_ideal_gas(P,T,q_vap,constants) = P ./ (constants.Rd .* T_virtual(T,q_vap))
-# ρ_ideal_gas!(ρ, P, T, q_vap, constants) = @. ρ = P / (constants.Rd * T_virtual(T,q_vap))
-# @inline R_m(q_vap, constants) = constants.Rd 
-# @inline Cp_m(q_vap, constants) = constants.Cp_air 
+# θ/T Poisson-relation family. Dispatches on constants.dry_theta_convention:
+#   false (standard): total pressure P, matches case-spec θ values directly.
+#   true  (PySDM/KiD dry): dry partial pressure P_dry -- only self-consistent
+#     when the state was initialized via the ρ_dry/P_dry (hydrostatic_pysdm)
+#     path, since that's what calibrates what a given θ number means.
+@inline R_m(q_vap, constants) = constants.Rd
+@inline Cp_m(q_vap, constants) = constants.Cp_air
 
+θl(P,T,ql,q_vap,constants) = constants.dry_theta_convention ?
+    (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* (T .- constants.L .*ql ./constants.Cp_air) :
+    (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants))
 
-# new (PySDM) convention), kept for reference and later decisions...
+θ_from_θl(P,θl_val,ql,q_vap,constants) = constants.dry_theta_convention ?
+    θl_val .+ (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* constants.L .* ql ./ constants.Cp_air :
+    θl_val .+ (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* constants.L .* ql ./ Cp_m.(q_vap, constants)
 
-@inline R_m(q_vap, constants) = (constants.Rd + mixing_ratio(q_vap) * constants.Rv) / (1 + mixing_ratio(q_vap))
-@inline Cp_m(q_vap, constants) = (constants.Cp_air + mixing_ratio(q_vap) * constants.Cp_vapor) / (1 + mixing_ratio(q_vap))
+theta_from_T(T,P,q_vap,constants) = constants.dry_theta_convention ?
+    T .* (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) :
+    T .* (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 
-ρ_ideal_gas(P,T,q_vap,constants) = P ./ (R_m.(q_vap, constants) .* T)
-ρ_ideal_gas!(ρ, P, T, q_vap, constants) = @. ρ = P / (R_m(q_vap, constants) * T)
+theta_from_T!(θ, T, P, q_vap,constants) = constants.dry_theta_convention ?
+    (@. θ = (T * (constants.P0 / calc_P_dry_from_P(P,q_vap,constants))^(constants.Rd / constants.Cp_air))) :
+    (@. θ = (T * (constants.P0 / P)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))))
 
-theta_from_T(T,P,q_vap,constants) = T .* (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air)
-theta_from_T!(θ, T, P, q_vap,constants) = @. θ = (T * (constants.P0 / calc_P_dry_from_P(P,q_vap,constants))^(constants.Rd / constants.Cp_air))
-@inline T_from_theta(θ,P,q_vap,constants) = θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air)
-T_from_theta!(T, θ, P, q_vap,constants) = @. T = θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air)
+@inline T_from_theta(θ,P,q_vap,constants) = constants.dry_theta_convention ?
+    θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air) :
+    θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 
-θl(P,T,ql,q_vap,constants) = (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* (T .- constants.L .*ql ./constants.Cp_air)
-θ_from_θl(P,θl_val,ql,q_vap,constants) = θl_val .+ (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* constants.L .* ql ./ constants.Cp_air
+T_from_theta!(T, θ, P, q_vap,constants) = constants.dry_theta_convention ?
+    (@. T = θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air)) :
+    (@. T = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants)))
+
+@inline R_m_moist(q_vap, constants) = (constants.Rd + mixing_ratio(q_vap) * constants.Rv) / (1 + mixing_ratio(q_vap))
+
+ρ_ideal_gas(P,T,q_vap,constants) = constants.dry_theta_convention ?
+    P ./ (R_m_moist.(q_vap, constants) .* T) :
+    P ./ (constants.Rd .* T_virtual(T,q_vap,constants))
+
+ρ_ideal_gas!(ρ, P, T, q_vap, constants) = constants.dry_theta_convention ?
+    (@. ρ = P / (R_m_moist(q_vap, constants) * T)) :
+    (@. ρ = P / (constants.Rd * T_virtual(T,q_vap,constants)))
 

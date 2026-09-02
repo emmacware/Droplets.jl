@@ -473,7 +473,7 @@ advected_thermo_fields(::ThetalQtVar, grid) = grid.states.θl_tmp, grid.states.q
 function reconstruct_after_advection!(::ThetaQvVar, grid, constants)
     nz = grid.nz
     compute_ql_at_cell!.(grid.states, 1:nz, constants)
-    grid.states.θl .= θl_from_θ.(grid.states.P, grid.states.θ, grid.states.ql_tmp, grid.states.qv, constants)
+    grid.states.θl_tmp .= θl.(grid.states.P, grid.states.θ, grid.states.ql_tmp, grid.states.qv, constants)
     grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
 end
 function reconstruct_after_advection!(::ThetalQtVar, grid, constants)
