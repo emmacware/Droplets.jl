@@ -72,7 +72,7 @@ struct scm_settings{FT<:AbstractFloat, Thr, Sch,
         Turb<:Dynamic, Cond<:Dynamic, REM_T<:Dynamic, Mot<:Dynamic,
         SpinupSat<:Dynamic, Rad<:Dynamic, Coag<:Dynamic, Sett<:Dynamic,
         Adv<:Dynamic, Rec<:Dynamic, TopEsc<:Dynamic, ThermoFB<:Dynamic, TurbDiff<:Dynamic,
-        KeepFill<:Dynamic, DropDiff<:DropletDiffusionScheme}
+        KeepFill<:Dynamic, DropDiff<:DropletDiffusionScheme, DensFB<:Dynamic}
     init_random_seed::Int
     coag_threading::Thr
     scheme::Sch
@@ -96,6 +96,10 @@ struct scm_settings{FT<:AbstractFloat, Thr, Sch,
     turbulent_droplet_diffusion_on::TurbDiff
     keep_grid_filled::KeepFill
     droplet_diffusion_scheme::DropDiff
+    # DynON (default): ρ (and, everywhere else in the model, P) is recomputed from θ/P/qv each timestep  
+    # DynOFF: the dry background state (ρ_dry, P_dry, captured once at init) is held fixed for the whole run, and total
+    # ρ/P are re-diagnosed from evolving qv 
+    density_feedback::DensFB
 end
 
 function scm_settings{FT}(;
@@ -122,15 +126,17 @@ function scm_settings{FT}(;
         turbulent_droplet_diffusion_on::Dynamic = DynON(),
         keep_grid_filled::Dynamic         = DynON(),
         droplet_diffusion_scheme::DropletDiffusionScheme = OUDropletDiffusion(),
+        density_feedback::Dynamic         = DynON(),
     ) where {FT<:AbstractFloat}
     scm_settings{FT, typeof(coag_threading), typeof(scheme),
         typeof(turbulence), typeof(condensation), typeof(REM), typeof(motion),
         typeof(spinupsaturation), typeof(radiation), typeof(coalescence),
         typeof(settling), typeof(advection), typeof(recycling),
         typeof(top_escape), typeof(thermo_feedback), typeof(turbulent_droplet_diffusion_on),
-        typeof(keep_grid_filled), typeof(droplet_diffusion_scheme)}(
+        typeof(keep_grid_filled), typeof(droplet_diffusion_scheme), typeof(density_feedback)}(
         init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, n_rad, spinup_time,
         turbulence, condensation, REM, motion, spinupsaturation, radiation,
         coalescence, settling, advection, recycling, top_escape, thermo_feedback,
-        turbulent_droplet_diffusion_on, keep_grid_filled, droplet_diffusion_scheme)
+        turbulent_droplet_diffusion_on, keep_grid_filled, droplet_diffusion_scheme,
+        density_feedback)
 end

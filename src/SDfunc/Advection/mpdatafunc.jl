@@ -26,7 +26,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinite_gauge::Bool=false,topcellreservoir=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -34,6 +34,7 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinit
         kp,km = limit(vbc,k+1, nz), limit(vbc,k-1, nz)
         tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
         tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+        g_factor !== nothing && (tmp.ϕ[k] /= g_factor[k])
     end
     if topcellreservoir
         tmp.ϕ[end] = 0.0
@@ -43,7 +44,7 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinit
     ϕ .+= tmp.ϕ
 end
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gauge::Bool=false,topcellreservoir=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -51,16 +52,20 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gaug
         kp,km = k+1,k-1
         tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
         tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+        g_factor !== nothing && (tmp.ϕ[k] /= g_factor[k])
     end
 
-    ϕ_halo_low  = max(2*ϕ[1]   - ϕ[2],     0)
-    ϕ_halo_high = max(2*ϕ[end] - ϕ[end-1], 0)
+
+    ϕ_halo_low  = ϕ[1]
+    ϕ_halo_high = ϕ[end]
 
 
     tmp.ϕ[1] -= flux(ϕ[1],ϕ[2], tmp.GCz_step[2],infinite_gauge=infinite_gauge)
     tmp.ϕ[1] += flux(ϕ_halo_low, ϕ[1], tmp.GCz_step[1],infinite_gauge=infinite_gauge)
+    g_factor !== nothing && (tmp.ϕ[1] /= g_factor[1])
     tmp.ϕ[end] -= flux(ϕ[end],ϕ_halo_high, tmp.GCz_step[end],infinite_gauge=infinite_gauge)
     tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
+    g_factor !== nothing && (tmp.ϕ[end] /= g_factor[end])
 
     ϕ .+= tmp.ϕ
 end
@@ -421,7 +426,7 @@ end
 #     @views 0.5 .* (v[:, 1:end-1] .+ v[:, 2:end])
 # end
 
-function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5)
+function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5, g_factor=nothing)
     n_corr = settings.n_corr
     vbc::BoundaryCondition = settings.vertical_boundary_condition
 
@@ -429,7 +434,7 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
     find_extrema!(ϕ_stage,tmp,vbc=vbc)
 
     tcr = vbc isa NoFlux
-    donor_cell_pass!(ϕ_stage,tmp,vbc, infinite_gauge=false, topcellreservoir=tcr)
+    donor_cell_pass!(ϕ_stage,tmp,vbc, infinite_gauge=false, topcellreservoir=tcr, g_factor=g_factor)
 
 
     for _ in 2:n_corr
@@ -439,24 +444,19 @@ function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpda
             find_extrema!(ϕ_stage,tmp,vbc=vbc)
         end
 
-        donor_cell_pass!(ϕ_stage,tmp, vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr)
+        donor_cell_pass!(ϕ_stage,tmp, vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr, g_factor=g_factor)
 
     end
 end
 
-# Fixed thermodynamics (KiD): advect qv in flux form against a static background
-# density, matching PyMPDATA's non_unit_g_factor scheme (PySDM's Shipway_and_Hill_2012
-# MPDATA_1D: advector = rho*w(t)*dt/dz built straight from the prescribed mass flux,
-# g_factor = the fixed rhod(z) profile, never re-advected). grid.wind.w here carries
-# that same mass flux (see kid1d.jl), not velocity, so GCz needs no density division.
-# grid.states.ρ is never touched here -- nothing else updates it during a KiD step
-# (turbulence/radiation are off), so it stays pinned at its t=0 hydrostatic value,
-# serving as the fixed background field on both sides of the qv .*=/.  /= below.
+
+# Prescribed Thermo Advection
 function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d, constants::Constants) where {FT<:AbstractFloat}
     GCz = grid.wind.w * Δt ./ grid.dz
-    grid.states.qv .*= grid.states.ρ
-    mpdata_step!(grid.states.qv, GCz, tmp, settings)
-    grid.states.qv ./= grid.states.ρ
+    r_vap = mixing_ratio.(grid.states.qv)
+
+    mpdata_step!(r_vap, GCz, tmp, settings; g_factor=grid.states.ρ_dry)
+    grid.states.qv .= specific_humidity.(r_vap)
     return
 end
 
@@ -470,7 +470,12 @@ end
 advected_thermo_fields(::ThetaQvVar, grid) = grid.states.θ, grid.states.qv
 advected_thermo_fields(::ThetalQtVar, grid) = grid.states.θl_tmp, grid.states.qt_tmp
 
-reconstruct_after_advection!(::ThetaQvVar, grid, constants) = nothing
+function reconstruct_after_advection!(::ThetaQvVar, grid, constants)
+    nz = grid.nz
+    compute_ql_at_cell!.(grid.states, 1:nz, constants)
+    grid.states.θl .= θl_from_θ.(grid.states.P, grid.states.θ, grid.states.ql_tmp, grid.states.qv, constants)
+    grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
+end
 function reconstruct_after_advection!(::ThetalQtVar, grid, constants)
     nz = grid.nz
     compute_ql_at_cell!.(grid.states, 1:nz, constants)

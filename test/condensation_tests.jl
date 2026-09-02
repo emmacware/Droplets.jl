@@ -356,6 +356,9 @@ end
         fill(FT(0.0), nz),
         droplets,
         spatial,
+        fill(FT(0.0), nz),
+        fill(FT(0.0), nz),
+        fill(FT(0.0), nz),
     )
 
     conddata = condensation_data(FT, nz, nsd)
@@ -409,6 +412,7 @@ end
         fill(ρ_ideal_gas(P_init, T_init, qv_sub, cst), nz),
         fill(FT(0.0), nz), fill(FT(0.0), nz),fill(FT(0.0), nz),fill(FT(0.0), nz),
         droplets3, spatial,
+        fill(FT(0.0), nz), fill(FT(0.0), nz), fill(FT(0.0), nz),
     )
     conddata3 = condensation_data(FT, nz, nsd)
     X3_before = copy(droplets3.X)

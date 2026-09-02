@@ -361,11 +361,12 @@ function bott1997term(grid, k, constants)
 
     # α  = ql > FT(1e-5) ? exp(0.6*(min(S_env*100,100)-100)) : FT(0)
     α  = exp(0.6*(min(S_env*100,100)-100))
-    b1 = 1 + 0.61*qt_k - 1.61*ql
+    δ  = virtual_temp_coeff(constants)  # Rv/Rd - 1 (≈0.61), shared with T_virtual/θ_virtual in conversions.jl
+    b1 = 1 + δ*qt_k - (δ+1)*ql
     a1 = (1 + constants.L^2 * qsat / (constants.Cp_air * constants.Rv * T^2))^(-1)
     a2 = a1 * constants.L * qsat / (constants.Rv * T * θ)
-    b2 = (1 + 0.61*qt_k - 3.22*ql) * (constants.L * θ) / (constants.Cp_air * T) - 1.61*θl_k
-    b3 = 0.61 * (θl_k + constants.L * θ * ql / (constants.Cp_air * T))
+    b2 = (1 + δ*qt_k - 2*(δ+1)*ql) * (constants.L * θ) / (constants.Cp_air * T) - (δ+1)*θl_k
+    b3 = δ * (θl_k + constants.L * θ * ql / (constants.Cp_air * T))
 
     return (b1 - b2*a2*α)*dθldz_k + (b3 + b2*a1*α)*dqtdz_k
 end

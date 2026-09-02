@@ -5,46 +5,107 @@ using Plots
 function dP_dz(P_z, ode_settings, z)
 
     FT = eltype(P_z)
-    constants,θl_func,qt_func = ode_settings
+    constants,θl_func,qt_func,q_vap_density = ode_settings
 
     θ_z::FT = θl_func(z)
     q_vap::FT = qt_func(z)
+    # q_vap_density = nothing (default): density uses q_vap
+    # q_vap_density = something: use Single fixed reference q_vap for the density term across
+    # the whole column instead, while still integrating the real θ(z)/q_vap(z) profile for
+    # everything else
+    q_vap_ρ::FT = q_vap_density === nothing ? q_vap : q_vap_density
 
     g::FT = constants.gconst
-    R_d::FT = constants.Rd
-    # R_v::FT = constants.Rv
-    # cp_d::FT = constants.Cp_air
-    # cp_v::FT = constants.Cp_vapor #double check
 
     T::FT = T_from_theta(θ_z,P_z,q_vap,constants)
-    T_virtual = T * (1 + 0.61 * q_vap)
-    ρ::FT = P_z / (R_d * T_virtual)
+    ρ::FT = ρ_ideal_gas(P_z, T, q_vap_ρ, constants)
 
     return -g * ρ
 end
 
 
-function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,init_dist,coagsettings,spatialsettings,condensationsettings,tkesettings,constants)
+# recreating PySDM's kid1d density-profile construction
+# (see PySDM/physics/hydrostatics/constant_g_vapour_mixing_ratio_and_theta_std.py's drho_dz,
+# PySDM_examples/Shipway_and_Hill_2012/settings.py's drhod_dz). Unlike dP_dz
+# above (which integrates P directly and needs no extra terms), PySDM integrates ρ_dry
+# treating θ_dry/r as locally constant, plus a correction for the vertical mixing-ratio gradient dr/dz 
+# θl_func is θ_dry(z), same convention as dP_dz
+
+function dρ_dry_dz_pysdm(ρ_dry_z, ode_settings, z)
+    FT = eltype(ρ_dry_z)
+    constants, θl_func, qt_func = ode_settings
+
+    θ_dry_z::FT = θl_func(z)
+    q_z::FT = qt_func(z)
+    r_z::FT = mixing_ratio(q_z)
+
+    T::FT = calc_T(constants, θ_dry_z, ρ_dry_z, q_z)
+    P_dry::FT = ρ_dry_z * constants.Rd * T
+    P::FT = calc_P_from_P_dry(P_dry, q_z, constants)
+
+    Rq::FT = (constants.Rv * r_z + constants.Rd) / (1 + r_z)
+    cp::FT = (constants.Cp_vapor * r_z + constants.Cp_air) / (1 + r_z)
+    ρ_total::FT = P / (Rq * T)
+
+    h = FT(1.0)
+    dr_dz::FT = (mixing_ratio(qt_func(z + h)) - mixing_ratio(qt_func(z - h))) / (2h)
+
+    drho_total_dz::FT = constants.gconst / T * ρ_total * (Rq / cp - 1) / Rq
+
+    return drho_total_dz / (1 + r_z) - ρ_dry_z * dr_dz / (1 + r_z)^2
+end
+
+function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,init_dist,coagsettings,spatialsettings,condensationsettings,tkesettings,constants;
+        deterministic_multiplicity::Bool=false, constant_qvap_hydrostatic::Bool=false, hydrostatic_pysdm::Bool=false)
     z_centers = [(k - 0.5) * dz for k in 1:nz]
     qv_profile = qt.(z_centers)
-    droplets = init_droplets_dycoms_scm(init_dist, coagsettings, spatialsettings, qv_profile)
+    droplets = init_droplets_dycoms_scm(init_dist, coagsettings, spatialsettings, qv_profile;
+        deterministic_multiplicity=deterministic_multiplicity)
     grid = create_scm_grids(nz, dz,droplets,spatial = spatialsettings,output=nothing)
 
-    p = (constants, θl, qt)
+    if hydrostatic_pysdm
+        T0 = T_from_theta(θl(0.0), P_surface, qt(0.0), constants)
+        P_dry0 = calc_P_dry_from_P(P_surface, qt(0.0), constants)
+        ρ_dry_0 = P_dry0 / (constants.Rd * T0)
+        p = (constants, θl, qt)
 
-    press = ODEProblem(dP_dz,P_surface,(0,maximum(grid.centers_z)+1),p)
-    z_save = sort(unique([grid.centers_z; grid.faces_z]))
-    P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save, tstops = [740.0])
-    grid.states.P .= P_init.(grid.centers_z)
-    grid.states.P_faces .= P_init.(grid.faces_z)
+        rhod_prob = ODEProblem(dρ_dry_dz_pysdm, ρ_dry_0, (0,maximum(grid.centers_z)+1), p)
+        z_save = sort(unique([grid.centers_z; grid.faces_z]))
+        ρ_dry_sol = solve(rhod_prob,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save, tstops = [740.0])
 
-    grid.states.θ .= θl.(grid.centers_z)
-    grid.states.qv .= qt.(grid.centers_z)
-    # grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
-    # grid.states.ρ .= grid.states.P ./ (constants.Rd .* T_virtual.(grid.states.T, grid.states.qv))
-    # grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T, grid.states.qv, constants)
-    grid.states.ρ .= ρ_calc_θ.(grid.states.P,grid.states.θ,grid.states.qv,constants)
-    ρ_dry = grid.states.ρ ./ (1 .+ mixing_ratio.(grid.states.qv))
+        grid.states.θ .= θl.(grid.centers_z)
+        grid.states.qv .= qt.(grid.centers_z)
+        grid.states.ρ_dry .= ρ_dry_sol.(grid.centers_z)
+        T_col = calc_T.(Ref(constants), grid.states.θ, grid.states.ρ_dry, grid.states.qv)
+        grid.states.P_dry .= grid.states.ρ_dry .* constants.Rd .* T_col
+        grid.states.P .= calc_P_from_P_dry.(grid.states.P_dry, grid.states.qv, constants)
+
+        ρ_dry_faces = ρ_dry_sol.(grid.faces_z)
+        qv_faces = qt.(grid.faces_z)
+        T_faces = calc_T.(Ref(constants), θl.(grid.faces_z), ρ_dry_faces, qv_faces)
+        P_dry_faces = ρ_dry_faces .* constants.Rd .* T_faces
+        grid.states.P_faces .= calc_P_from_P_dry.(P_dry_faces, qv_faces, constants)
+
+        grid.states.ρ .= calc_ρ_from_ρ_dry.(grid.states.ρ_dry, grid.states.qv)
+        grid.states.θv .= θ_virtual.(grid.states.θ, grid.states.qv,constants)
+    else
+        q_vap_density = constant_qvap_hydrostatic ? qt(0.0) : nothing
+        p = (constants, θl, qt, q_vap_density)
+
+        press = ODEProblem(dP_dz,P_surface,(0,maximum(grid.centers_z)+1),p)
+        z_save = sort(unique([grid.centers_z; grid.faces_z]))
+        P_init = solve(press,Tsit5(), reltol = 1e-10, abstol = 1e-10,saveat = z_save, tstops = [740.0])
+        grid.states.P .= P_init.(grid.centers_z)
+        grid.states.P_faces .= P_init.(grid.faces_z)
+
+        grid.states.θ .= θl.(grid.centers_z)
+        grid.states.qv .= qt.(grid.centers_z)
+        grid.states.ρ .= ρ_calc_θ.(grid.states.P,grid.states.θ,grid.states.qv,constants)
+        grid.states.ρ_dry .= calc_ρ_dry_from_ρ.(grid.states.ρ, grid.states.qv)
+        grid.states.P_dry .= calc_P_dry_from_P.(grid.states.P, grid.states.qv, Ref(constants))
+        grid.states.θv .= θ_virtual.(grid.states.θ, grid.states.qv)
+    end
+    ρ_dry = grid.states.ρ_dry
 
     # for k in 1:nz
         
@@ -86,7 +147,8 @@ end
 
 
 function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
-    spatial::spatial_settings{FT}, qv_profile::AbstractVector) where FT<:AbstractFloat
+    spatial::spatial_settings{FT}, qv_profile::AbstractVector;
+    deterministic_multiplicity::Bool=false) where FT<:AbstractFloat
 
     Ns = settings.Ns
     ΔV = settings.ΔV
@@ -128,7 +190,12 @@ function init_droplets_dycoms_scm(dist, settings::coag_settings{FT},
         n_k = Ns_per_cell[k]
         drop_idx = offset+1 : offset+n_k
 
-        cdf_values = sort(rand(Uniform(percentile_limit[1], percentile_limit[2]), 2*n_k + 1))
+        cdf_values = if deterministic_multiplicity
+            n_k == 0 ? FT[percentile_limit[1]] :
+                collect(range(FT(percentile_limit[1]), FT(percentile_limit[2]), length=2*n_k + 1))
+        else
+            sort(rand(Uniform(percentile_limit[1], percentile_limit[2]), 2*n_k + 1))
+        end
         rad[drop_idx] .= quantile.(dist, cdf_values[2:2:end-1])
         cdf_values = cdf_values[1:2:end]
         cdf_vals = cdf_values[2:end] - cdf_values[1:end-1]
@@ -162,7 +229,7 @@ function plot_env_profiles(grid)
     ql = grid.states.ql_tmp
     grid.states.T_tmp .= T_from_theta.(grid.states.θ, grid.states.P,grid.states.qv, constants)
     p1 = plot(grid.states.θ,grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", title="θ", label="θ")
-    p1 = plot!(θl.(grid.states.P,grid.states.T_tmp,grid.states.qv,ql,constants),grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", label="θl")
+    p1 = plot!(θl.(grid.states.P,grid.states.T_tmp,ql,grid.states.qv,constants),grid.centers_z, ylabel="Height (m)", xlabel="Potential Temperature", label="θl")
     p2 = plot(grid.states.qv*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", label="qv")
     p2 = plot!(ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="ql")
     p2 = plot!(grid.states.qv*1000 .+ ql*1000,grid.centers_z, ylabel="Height (m)", xlabel="q (g/kg)", title="q_v", legend=false, label="qt")
@@ -176,7 +243,7 @@ function plot_env_profiles(grid)
     # p4 = vline!([ρ_inv], line=:dash, color=:red, label="ρ_inv")
     T_from_theta!(grid.states.T_tmp,grid.states.θ,grid.states.P,grid.states.qv,constants)
     p5 = plot(grid.states.T_tmp,grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
-    p5 = plot!(T_virtual.(grid.states.T_tmp, grid.states.qv),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
+    p5 = plot!(T_virtual.(grid.states.T_tmp, grid.states.qv,constants),grid.centers_z, ylabel="Height (m)", xlabel="Temperature(K)", title="T", legend=false)
     
     p7 = plot(grid.states.e,grid.centers_z, ylabel="Height (m)", xlabel="Turbulent Kinetic Energy (J/kg)", title="TKE", legend=false)
 

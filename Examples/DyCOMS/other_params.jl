@@ -143,12 +143,14 @@ diagnosticsettings = diagnostic_settings()
 # Create environmnent
 grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
     nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+    coagsettings,spatialsettings,condensationsettings,tkesettings,constants,
+    deterministic_multiplicity=true
     )
 
 radgrid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
     nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+    coagsettings,spatialsettings,condensationsettings,tkesettings,constants,
+    deterministic_multiplicity=true
     )
 
 # inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
@@ -175,7 +177,7 @@ radius_bins_edges = 10 .^ range(log10(1*1e-8), log10(1e2*1e-6), length=num_bins+
 # radius_bins_edges = range(0.5*1e-6,100e-6, length=num_bins+1) 
 
 runsettings = run_settings{FT}(num_bins=num_bins,radius_bins_edges=radius_bins_edges,normalize_bins_dlnr=false,binning_method=mass_density_lnr)
-seeds = 10
+seeds = 2
 
 
 for num_seeds in 1:seeds
@@ -198,7 +200,8 @@ for num_seeds in 1:seeds
 
             grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
             nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-            coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+            coagsettings,spatialsettings,condensationsettings,tkesettings,constants,
+            deterministic_multiplicity=true
             )
             inv_idx = findfirst(k -> grid.centers_z[k] >= inv_height, 1:nz)
             grid.states.e[1:inv_idx] .= 0.01#1e-6

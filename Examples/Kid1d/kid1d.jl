@@ -27,17 +27,15 @@ const t_max    = 3600  # s  (60 min)
 const t_output =  60  # s
 
 # ── Shipway & Hill 2012 initial profiles ─────────────────────────────────────
-θ_initial(z) = z <= 740.0 ? 297.9 :
+θ_std_initial(z) = z <= 740.0 ? 297.9 :
                297.9 + (312.66 - 297.9) * (z - 740.0) / (3260.0 - 740.0)
-
-qv_initial(z) = z <= 740.0 ? 0.015 + (0.0138 - 0.015) * z / 740.0 :
+r_initial(z) = z <= 740.0 ? 0.015 + (0.0138 - 0.015) * z / 740.0 :
                               0.0138 + (0.0024 - 0.0138) * (z - 740.0) / (3260.0 - 740.0)
-# θ_initial(z) = calc_θ_dry(constants, θs_initial(z), qv_initial(z))
-                    
+qv_initial(z) = specific_humidity(r_initial(z))
+θ_initial(z) = calc_θ_dry(constants, θ_std_initial(z), qv_initial(z))
+
 # ── KiD kinematic updraft: ρw = ρw₁ sin(πt/t₁) for t < t₁, else 0 ──────────
 const rho_times_w_1 = 3.0    # kg m⁻² s⁻¹
-const rho_STP_kid   = 1.225  # kg m⁻³  (used for reservoir depth estimate)
-# const apprx_w1      = rho_times_w_1 / rho_STP_kid   # ≈ 1.63 m/s
 const t_w           = 600.0  # s
 prescribed_rho_w(t) = t < t_w ? rho_times_w_1 * sin(π * t / t_w) : 0.0
 
@@ -51,21 +49,23 @@ initial_aerosol_dist = LogNormal(mu_ln, sigma_ln)
 
 const kappa_kid               = 1.0
 ammonium_sulfate_density = 1.78e3   # kg m⁻³
-const P_surface_kid            = 100700.0 # Pa  (Shipway & Hill 2012 reference)
+const P_surface_kid            = 99000.0 # Pa  (Shipway & Hill 2012 reference)
 
 # ── Settings structs ──────────────────────────────────────────────────────────
 
 
 
 #Settings Structs
-spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=10.0)#5.0)
+spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=1.0,
+    weighted_droplet_allocation=false)#5.0)
 
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt_coag,kernel=hydrodynamic,hydrodynamic_collision_eff_func=false)
 
 condensationsettings = condensation_settings{FT}(kappa=kappa_kid,ρ_solute = ammonium_sulfate_density,Δt=dt_cond)
 
-mpdatasettings = mpdata_settings_1d(nz,nonoscillatory=true, vertical_boundary_condition=Extrapolated(),infinite_gauge=true,
-        thermo_variable = ThetalQtVar())
+mpdatasettings = mpdata_settings_1d(nz,n_corr=2,nonoscillatory=true, vertical_boundary_condition=Extrapolated(),infinite_gauge=true,
+        thermo_variable = ThetalQtVar()
+        )
 
 tkesettings = tke_settings{FT}()#u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v,
     #LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux)
@@ -84,31 +84,28 @@ base_scm = (
     n_coag                      = round(Int, dt / dt_coag),
     spinup_time                 = 0.0,
     turbulent_droplet_diffusion_on = DynOFF(),
-    keep_grid_filled            = DynOFF(), # disable donor-cell SD reseeding of thin layers
+    keep_grid_filled            = DynOFF(), 
+    recycling                    = DynON(), 
+    REM                         = DynOFF(),
+    settling                     = DynOFF(),
+    spinupsaturation            = DynOFF(),
+    coalescence                  = DynOFF(),
+    top_escape                   = DynON(),
+    thermo_feedback             = DynOFF(),
+    density_feedback            = DynOFF(),
+    n_rad                       = 1
+    )
 
-)
 
-# scmspinupsettings = scm_settings{FT}(; base_scm...,
-# REM              = DynOFF(),
-# settling         = DynOFF(),
-# spinupsaturation = DynON(),
-# coalescence       = DynOFF(),
-# )
-scmsettings = scm_settings{FT}(; base_scm...,
-REM              = DynOFF(),
-settling         = DynON(),
-spinupsaturation = DynOFF(),
-coalescence       = DynON(),
-top_escape = DynON(),
-thermo_feedback = DynOFF(),
-)
+scmsettings = scm_settings{FT}(; base_scm...,)
 diagnosticsettings = diagnostic_settings()
 
 
 # Create environmnent
 grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
     nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), initial_aerosol_dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,constants
+    coagsettings,spatialsettings,condensationsettings,tkesettings,constants;
+    deterministic_multiplicity=true, hydrostatic_pysdm=true
     )
 
 CArad = raddata.CArad
@@ -128,30 +125,14 @@ for i in 1:Int(spatialsettings.t_max / dt)
     end
 
     rho_w_t = prescribed_rho_w(i * dt)
-    # grid.wind.w carries the prescribed mass flux ρw(t) itself (uniform in z, like
-    # PySDM's `advector`), NOT velocity -- mpdata_scm! divides by the fixed background
-    # density instead. Droplet motion still needs actual velocity, computed separately.
     grid.wind.w .= rho_w_t
-    prescribed_w(z) = rho_w_t / grid.states.ρ[clamp(floor(Int, z / dz) + 1, 1, nz)]
-
+    prescribed_w(z) = rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
+    # grid.wind.w .= prescribed_w.(grid.centers_z)
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
     coagdata,conddata,raddata,turbdata,
     diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
 
 end
-
-# for i in (spinup_step+1):Int(spatialsettings.t_max / dt)
-#     if i*dt % 100 == 0
-#         println("Timestep: ", i)
-#     end
-
-#     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-#     coagdata,conddata,raddata,turbdata,
-#     diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
-#     grid.wind.z .= prescribed_w.(grid.centers_z, i*dt)
-# end
-
-# ensemble_output[num_seeds] = grid.output
 
 penv = plot_env_profiles(grid)
 #put tkesettings.turbulence_scheme in the title
@@ -174,13 +155,3 @@ cbar = heatmap([0],range(0, 2e-3, length=100),  reshape(range(0, 2e-3, length=10
 l = @layout [a b c{0.05w}]
 plot(p1, p2, cbar, layout=l, size=(900,400),plot_title="K1D Droplets.jl ",
 left_margin=3Plots.mm, bottom_margin=3Plots.mm,top_margin=3Plots.mm)
-
-savefig("DropletsKid1d_LWC_heatmaps.pdf")
-
-# heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
-# grid.output.rain_LWC,color=:viridis,clims=(0,1.5e-3))
-# # t_skips=20
-# p6 = plot(sat.(grid.output.qv[:,1:t_skips:end],grid.output.P[:,1:t_skips:end]) ./ esat.(T_from_theta.(grid.output.θ[:,1:t_skips:end],grid.output.P[:,1:t_skips:end],constants)), grid.centers_z, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)
-
-
-# plot(sat.(grid.states.qv,grid.states.P) ./ esat.(T_from_theta.(grid.states.θ,grid.states.P,constants)), grid.centers_z, ylabel="z (m)", xlabel="ql (g/kg)", title="ql", legend=false)

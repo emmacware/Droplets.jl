@@ -168,13 +168,6 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
         # longer bounds anything — capping there would invert the bracket
         lo_r < r_crit && (hi_r = min(hi_r, r_crit))
     else
-        # Evaporation can be far faster/more nonlinear than growth — a droplet
-        # can fully desiccate back to its dry core within this substep, in
-        # which case no root exists above dry_r at all. Test the widest
-        # physically valid bracket directly: any real root must lie in
-        # [dry_r, R]. If it doesn't bracket one, the droplet dries out
-        # completely this substep — resolve that now instead of recursing to
-        # (re)discover the same thing up to max_depth times.
         g_dry = dry_r * dry_r - R2 - timestep * c * (S1 - A / dry_r + kappa)
         g_R   = -timestep * c * F0
         if g_dry * g_R >= 0
@@ -321,13 +314,9 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         # longer bounds anything — capping there would invert the bracket
         lo_r < r_crit && (hi_r = min(hi_r, r_crit))
     else
-        # Evaporation can be far faster/more nonlinear than growth — a droplet
-        # can fully desiccate back to its dry core within this substep, in
-        # which case no root exists above dry_r at all. Test the widest
-        # physically valid bracket directly: any real root must lie in
-        # [dry_r, R]. If it doesn't bracket one, the droplet dries out
+        # If it doesn't bracket one, the droplet dries out
         # completely this substep — resolve that now instead of recursing to
-        # (re)discover the same thing up to max_depth times.
+        # discover the same thing up to max_depth times.
         g_dry = dry_r * dry_r - R2 - timestep * (c * (S1 - A / dry_r + kappa) +
                 radcoeff*calc_cond_rad_term(dry_r, z, constants, raddata, absliq_r_interp))
         g_R   = -timestep * F0

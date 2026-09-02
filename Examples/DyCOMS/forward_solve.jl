@@ -65,7 +65,8 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
         grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     end
-    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
+    update_theta!(scmsettings.density_feedback, grid, constants)
+    update_density!(scmsettings.density_feedback, grid, constants)
 
 
     mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
@@ -94,7 +95,23 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 end
 
 
-function recycle_precipitation!(::DynOFF,droplets, grid, spatialsettings, diagnosticsettings, coagdata, 
+update_theta!(::DynON, grid, constants) = nothing
+update_theta!(::DynOFF, grid, constants) = nothing
+
+update_density!(::DynON, grid, constants) =
+    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
+
+# KiD: ρ_dry/P_dry were captured once at init and never touched;
+# total ρ/P are re-diagnosed from the currently evolving
+# qv (calc_ρ_from_ρ_dry / calc_P_from_P_dry)
+function update_density!(::DynOFF, grid, constants)
+    states = grid.states
+    states.ρ .= calc_ρ_from_ρ_dry.(states.ρ_dry, states.qv)
+    states.P .= calc_P_from_P_dry.(states.P_dry, states.qv, Ref(constants))
+    return nothing
+end
+
+function recycle_precipitation!(::DynOFF,droplets, grid, spatialsettings, diagnosticsettings, coagdata,
     constants,output_step)
 end
 

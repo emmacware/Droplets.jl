@@ -17,11 +17,12 @@ struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     θl_tmp::Vector{FT}
     droplets::droplet_attributes_1d{FT}
     spatial::spatial_settings_1d{FT}
-    # extra vars
-    # P_dry::Vector{FT}
-    # ρ_dry::Vector{FT}
-    # θ_dry::Vector{FT}
-
+    # dry/virtual background state, captured once at init (calc_ρ_dry_from_ρ /
+    # calc_P_dry_from_P / θ_virtual). Only used/kept meaningful when
+    # scmsettings.density_feedback == DynOFF 
+    ρ_dry::Vector{FT}
+    P_dry::Vector{FT}
+    θv::Vector{FT}
 end
 
 
@@ -172,9 +173,9 @@ function create_scm_grids(num_levels::Int, dz::FT,droplets::droplet_attributes_1
     if spatial == nothing
         spatial = spatial_settings_1d{FT}(Nz=num_levels, z_grid_height=dz, Z_max=num_levels*dz)
     end
-    states = scm_states{FT}(num_levels,zeros(FT,num_levels),zeros(FT,num_levels+1), zeros(FT,num_levels), 
+    states = scm_states{FT}(num_levels,zeros(FT,num_levels),zeros(FT,num_levels+1), zeros(FT,num_levels),
         zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels), zeros(FT,num_levels),zeros(FT,num_levels),zeros(FT,num_levels),
-        zeros(FT,num_levels), droplets,spatial)
+        zeros(FT,num_levels), droplets,spatial, zeros(FT,num_levels), zeros(FT,num_levels), zeros(FT,num_levels))
     if output == nothing
         output = scm_outputs(num_levels, spatial.t_max, spatial.dt_output)
     end
