@@ -448,7 +448,7 @@ end
 #     return Fk/(Fa*Fq)
 # end
 
-K(T) = (2.38+0.00703(T −constants.T0))*1e-2
+K(T) = (2.38+0.00703(T - constants.T0))*1e-2
 const β_diff = 0.04
 β(T) = β_diff * exp(-(T-constants.T0)/85)
 const α_diff = 0.7
