@@ -1,7 +1,7 @@
 name = "Droplets"
 uuid = "410e754a-0d3e-432f-bd69-cc9df980427a"
 authors = ["Emma Ware", "Obin Sturm", "Adele Igel"]
-version = "0.1.0-DEV"
+version = "0.1.0"
 
 [deps]
 Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
