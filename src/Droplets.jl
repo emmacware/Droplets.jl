@@ -8,6 +8,7 @@ include(joinpath("SDfunc", "Condensation","condensation.jl"))
 include(joinpath("SDfunc", "DropletMotion","updateposition.jl"))
 include(joinpath("SDfunc", "binning.jl"))
 include(joinpath("SDfunc","SCM","single_column.jl"))
+include(joinpath("SDfunc","Turbulence","tke.jl"))
 include(joinpath("SDfunc", "Advection", "mpdata.jl"))
 include(joinpath("SDfunc","Thermodynamics","conversions.jl"))
 

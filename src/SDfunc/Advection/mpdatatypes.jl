@@ -1,4 +1,4 @@
-export BoundaryCondition, Periodic, NoFlux,
+export BoundaryCondition, Periodic, NoFlux, Reservoir, Extrapolated,
        limit, flux, mpdata_settings, mpdata_tmp, mpdata_fields, mpdata_mulitple_fields,
          mpdata_settings_1d, mpdata_tmp_1d, mpdata_fields_1d
 
@@ -6,12 +6,14 @@ export BoundaryCondition, Periodic, NoFlux,
 abstract type BoundaryCondition end
 struct Periodic <: BoundaryCondition end
 struct NoFlux <: BoundaryCondition end
+struct Reservoir <: BoundaryCondition end
+struct Extrapolated <: BoundaryCondition end
 
 struct mpdata_settings
     n_corr::Int
     grid::Tuple{Int, Int}
-    horizontal_boundary_condition::Union{Periodic, NoFlux}
-    vertical_boundary_condition::Union{Periodic, NoFlux}
+    horizontal_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
+    vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
     nonoscillatory::Bool
     infinite_gauge::Bool
 
@@ -26,20 +28,23 @@ struct mpdata_settings
     end
 end
 
-struct mpdata_settings_1d
+struct mpdata_settings_1d{TVar<:ThermoVariable}
     n_corr::Int
     grid::Int
-    vertical_boundary_condition::Union{Periodic, NoFlux}
+    vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}
+    # topcell_boundary_condition::Union{Periodic, NoFlux, Reservoir}
     nonoscillatory::Bool
     infinite_gauge::Bool
+    thermo_variable::TVar  # advect (θ,qv) directly, or (θ_l,qt) with θ/qv reconstructed after
 
     function mpdata_settings_1d(grid::Int;
                              n_corr=2,
                              vertical_boundary_condition::BoundaryCondition=Periodic(),
                              nonoscillatory::Bool=false,
-                             infinite_gauge::Bool=false)
-        new(n_corr, grid, vertical_boundary_condition,
-            nonoscillatory, infinite_gauge)
+                             infinite_gauge::Bool=false,
+                             thermo_variable::ThermoVariable=ThetaQvVar())
+        new{typeof(thermo_variable)}(n_corr, grid, vertical_boundary_condition,
+            nonoscillatory, infinite_gauge, thermo_variable)
     end
 end
 
@@ -62,13 +67,11 @@ struct mpdata_tmp_1d
     ϕ::Vector{Float64}
     GCz_step::Vector{Float64}
     GCz_tmp::Vector{Float64}
-    # minmax::@NamedTuple{localmin::Vector{Float64}, localmax::Vector{Float64}}
+    minmax::@NamedTuple{localmin::Vector{Float64}, localmax::Vector{Float64}}
 
     function mpdata_tmp_1d(ϕ, GCz_step)
-        # minmax = (localmin=zeros(size(ϕ)), localmax=zeros(size(ϕ)))
-        new(zeros(length(ϕ)), zeros(length(GCz_step)), zeros(length(GCz_step)), 
-            # minmax
-            )
+        minmax = (localmin=zeros(length(ϕ)), localmax=zeros(length(ϕ)))
+        new(zeros(length(ϕ)), zeros(length(GCz_step)), zeros(length(GCz_step)), minmax)
     end
 end
 

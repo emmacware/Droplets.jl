@@ -1,8 +1,9 @@
 export mpdata_step!, flux_horizontal!, flux_vertical!, donor_cell_pass!, compute_antidiffusive_velocity!
-export antiosc!, flux_faces, beta_function, find_extrema!, mpdata_scm!
+export antiosc!, flux_faces, beta_function, beta_function_1d, find_extrema!, mpdata_scm!
 
 limit(bc::Periodic,i,N) = i > N ? i - N : i < 1 ? i + N : i
 limit(bc::NoFlux,i,N) = i > N ? N + 1 - (i - N) : i < 1 ? i + (1 + abs(i)) : i
+limit(bc::Extrapolated,i,N) = clamp(i, 1, N)
 flux(ψL, ψR, GC;infinite_gauge::Bool=false) = infinite_gauge ? GC : (max(GC, 0) * ψL + min(GC, 0) * ψR)
 
 function flux_horizontal!(ϕ,ϕ_tmp,GCx;bc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
@@ -25,7 +26,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
-function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
     tmp.ϕ .= 0
 
     nz = length(ϕ)
@@ -33,7 +34,38 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic
         kp,km = limit(vbc,k+1, nz), limit(vbc,k-1, nz)
         tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
         tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+        g_factor !== nothing && (tmp.ϕ[k] /= g_factor[k])
     end
+    if topcellreservoir
+        tmp.ϕ[end] = 0.0
+        # tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
+    end
+
+    ϕ .+= tmp.ϕ
+end
+
+function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
+    tmp.ϕ .= 0
+
+    nz = length(ϕ)
+    for k in 2:nz-1
+        kp,km = k+1,k-1
+        tmp.ϕ[k] -= flux(ϕ[k], ϕ[kp], tmp.GCz_step[k+1],infinite_gauge=infinite_gauge)
+        tmp.ϕ[k] += flux(ϕ[km], ϕ[k], tmp.GCz_step[k],infinite_gauge=infinite_gauge)
+        g_factor !== nothing && (tmp.ϕ[k] /= g_factor[k])
+    end
+
+
+    ϕ_halo_low  = ϕ[1]
+    ϕ_halo_high = ϕ[end]
+
+
+    tmp.ϕ[1] -= flux(ϕ[1],ϕ[2], tmp.GCz_step[2],infinite_gauge=infinite_gauge)
+    tmp.ϕ[1] += flux(ϕ_halo_low, ϕ[1], tmp.GCz_step[1],infinite_gauge=infinite_gauge)
+    g_factor !== nothing && (tmp.ϕ[1] /= g_factor[1])
+    tmp.ϕ[end] -= flux(ϕ[end],ϕ_halo_high, tmp.GCz_step[end],infinite_gauge=infinite_gauge)
+    tmp.ϕ[end] += flux(ϕ[end-1], ϕ[end], tmp.GCz_step[end-1],infinite_gauge=infinite_gauge)
+    g_factor !== nothing && (tmp.ϕ[end] /= g_factor[end])
 
     ϕ .+= tmp.ϕ
 end
@@ -117,9 +149,10 @@ function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryC
     GCz_inside = tmp.GCz_step .+ 0
     nz = length(ϕ)
 
-    for k in 1:nz
+    for k_ in 0:nz-1
 
-        kp = limit(vbc,k + 1, nz)
+        kp = limit(vbc,k_ + 1, nz)
+        k = limit(vbc,k_, nz)
 
         B_num =(ϕ[kp] - ϕ[k])
         B_den = settings.infinite_gauge ? 2 : (ϕ[kp] + ϕ[k] + ϕ_eps)
@@ -195,7 +228,7 @@ function antiosc!(ϕ,tmp,settings; hbc::BoundaryCondition=Periodic(), vbc::Bound
     # flux_h, flux_v = flux_faces(ϕ, antidiffusive_GCx, antidiffusive_GCy; 
     #                            hbc=hbc, vbc=vbc, infinite_gauge=settings.infinite_gauge)
 
-    for i in 1:nx, j in 1:ny
+    for i in 1:nx, j in 1:ny 
             jp1,jm1,jp2 = limit(vbc,j + 1, ny), limit(vbc,j - 1, ny), limit(vbc,j + 2, ny)
             ip1, im1,ip2 = limit(hbc,i + 1, nx), limit(hbc,i - 1, nx), limit(hbc,i + 2, nx)
             #faces
@@ -284,6 +317,62 @@ function find_extrema!(ϕ,tmp;hbc::BoundaryCondition=Periodic(), vbc::BoundaryCo
     end
 end
 
+function find_extrema!(ϕ::Vector, tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic())
+    nz = length(ϕ)
+    for k in 1:nz
+        km1, kp1 = limit(vbc, k-1, nz), limit(vbc, k+1, nz)
+        tmp.minmax.localmax[k] = maximum((ϕ[km1], ϕ[k], ϕ[kp1]))
+        tmp.minmax.localmin[k] = minimum((ϕ[km1], ϕ[k], ϕ[kp1]))
+    end
+end
+
+function beta_function_1d(ϕ, tmp::mpdata_tmp_1d, k, km1, kp1, GCzmh, GCzph, infinite_gauge; ϕ_eps=1e-20)
+    ψ = ϕ[k]; ψL = ϕ[km1]; ψR = ϕ[kp1]
+    max_phi = tmp.minmax.localmax[k]
+    min_phi = tmp.minmax.localmin[k]
+
+    β_in = (max_phi - ψ) / (
+         max(flux(ψL, ψ, GCzmh, infinite_gauge=infinite_gauge), 0) +
+        -min(flux(ψ, ψR, GCzph, infinite_gauge=infinite_gauge), 0) + ϕ_eps)
+
+    β_out = (ψ - min_phi) / (
+        -min(flux(ψL, ψ, GCzmh, infinite_gauge=infinite_gauge), 0) +
+         max(flux(ψ, ψR, GCzph, infinite_gauge=infinite_gauge), 0) + ϕ_eps)
+
+    β_in  = max(0.0, min(1.0, β_in))
+    β_out = max(0.0, min(1.0, β_out))
+    return β_in, β_out
+end
+
+function antiosc!(ϕ::Vector, tmp::mpdata_tmp_1d, settings; vbc::BoundaryCondition=Periodic())
+    nz = length(ϕ)
+    tmp.GCz_tmp .= 0
+
+    for k in 1:nz-1
+        km1 = limit(vbc, k-1, nz)
+        kp1 = k + 1
+        kp2 = limit(vbc, k+2, nz)
+
+        beta_k_in,   beta_k_out   = beta_function_1d(ϕ, tmp, k,   km1, kp1,
+            tmp.GCz_step[k],   tmp.GCz_step[k+1], settings.infinite_gauge)
+        beta_kp1_in, beta_kp1_out = beta_function_1d(ϕ, tmp, kp1, k,   kp2,
+            tmp.GCz_step[k+1], tmp.GCz_step[k+2], settings.infinite_gauge)
+
+        if tmp.GCz_step[k+1] >= 0
+            scale = min(1.0, beta_k_out, beta_kp1_in)
+        else
+            scale = min(1.0, beta_k_in,  beta_kp1_out)
+        end
+        tmp.GCz_tmp[k+1] = tmp.GCz_step[k+1] * scale
+    end
+
+    if vbc isa Periodic
+        tmp.GCz_tmp[1] = tmp.GCz_tmp[end]
+    end
+
+    tmp.GCz_step .= tmp.GCz_tmp
+end
+
 function mpdata_step!(ϕ_stage::Matrix{Float64}, GCx::Matrix{Float64}, GCy::Matrix{Float64}, tmp::mpdata_tmp,settings::mpdata_settings;f=0.5) #current 201.875 μs (0 allocations: 0 bytes)
     n_corr = settings.n_corr
     hbc::BoundaryCondition = settings.horizontal_boundary_condition
@@ -337,36 +426,91 @@ end
 #     @views 0.5 .* (v[:, 1:end-1] .+ v[:, 2:end])
 # end
 
-function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5) 
+function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5, g_factor=nothing)
     n_corr = settings.n_corr
     vbc::BoundaryCondition = settings.vertical_boundary_condition
 
     tmp.GCz_step .= GCz.+0
-    # find_extrema!(ϕ_stage,tmp)
+    find_extrema!(ϕ_stage,tmp,vbc=vbc)
 
-    donor_cell_pass!(ϕ_stage,tmp,vbc=vbc, infinite_gauge=false)
+    tcr = vbc isa NoFlux
+    donor_cell_pass!(ϕ_stage,tmp,vbc, infinite_gauge=false, topcellreservoir=tcr, g_factor=g_factor)
 
 
     for _ in 2:n_corr
         compute_antidiffusive_velocity!(ϕ_stage,tmp,settings,f=f, vbc=vbc)
         if settings.nonoscillatory
             antiosc!(ϕ_stage,tmp,settings,vbc=vbc)
-            # find_extrema!(ϕ_stage,tmp)
+            find_extrema!(ϕ_stage,tmp,vbc=vbc)
         end
 
-        donor_cell_pass!(ϕ_stage,tmp, vbc=vbc,infinite_gauge=settings.infinite_gauge)
+        donor_cell_pass!(ϕ_stage,tmp, vbc,infinite_gauge=settings.infinite_gauge, topcellreservoir=tcr, g_factor=g_factor)
 
     end
 end
 
-function mpdata_scm!(grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+
+# Prescribed Thermo Advection
+function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d, constants::Constants) where {FT<:AbstractFloat}
+    GCz = grid.wind.w * Δt ./ grid.dz
+    r_vap = mixing_ratio.(grid.states.qv)
+
+    mpdata_step!(r_vap, GCz, tmp, settings; g_factor=grid.states.ρ_dry)
+    grid.states.qv .= specific_humidity.(r_vap)
+    return
+end
+
+function mpdata_scm!(::DynOFF,::Dynamic,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
+end
+
+# Which pair of grid.states arrays MPDATA advects: (θ,qv) directly, or (θ_l,qt) --
+# in the latter case θ/qv are reconstructed after advection (see
+# reconstruct_after_advection! below), using the same ql-computed-from-stale-θ/qv
+# approximation forward_solve.jl's turbulence path already uses.
+advected_thermo_fields(::ThetaQvVar, grid) = grid.states.θ, grid.states.qv
+advected_thermo_fields(::ThetalQtVar, grid) = grid.states.θl_tmp, grid.states.qt_tmp
+
+function reconstruct_after_advection!(::ThetaQvVar, grid, constants)
+    nz = grid.nz
+    compute_ql_at_cell!.(grid.states, 1:nz, constants)
+    grid.states.θl_tmp .= θl.(grid.states.P, grid.states.θ, grid.states.ql_tmp, grid.states.qv, constants)
+    grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
+end
+function reconstruct_after_advection!(::ThetalQtVar, grid, constants)
+    nz = grid.nz
+    compute_ql_at_cell!.(grid.states, 1:nz, constants)
+    grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
+    grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+end
+
+function mpdata_scm!(::DynON,::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 
     GCz = grid.wind.w * Δt ./ grid.dz
 
-    mpdata_step!(grid.states.qv, GCz,tmp,settings)
-    mpdata_step!(grid.states.θ, GCz,tmp,settings)
-    
-    grid.states.T .= T_from_theta(grid.states.θ,grid.states.P,constants)
-    grid.states.ρ .= ρ_ideal_gas(grid.states.P,grid.states.T,grid.states.qv,constants)
+    θ_field, q_field = advected_thermo_fields(settings.thermo_variable, grid)
+
+    #kind of naughty but we undo it within this function
+    q_field .*= grid.states.ρ
+    θ_field .*= grid.states.ρ
+    grid.states.e .*= grid.states.ρ
+    grid.wind.u .*= grid.states.ρ
+    grid.wind.v .*= grid.states.ρ
+
+
+    mpdata_step!(q_field, GCz,tmp,settings)
+    mpdata_step!(θ_field, GCz,tmp,settings)
+    mpdata_step!(grid.states.e, GCz,tmp,settings)
+    mpdata_step!(grid.wind.u, GCz, tmp, settings)
+    mpdata_step!(grid.wind.v, GCz, tmp, settings)
+    mpdata_step!(grid.states.ρ, GCz,tmp,settings)
+
+    q_field ./= grid.states.ρ
+    θ_field ./= grid.states.ρ
+    grid.states.e ./= grid.states.ρ
+    grid.wind.u ./= grid.states.ρ
+    grid.wind.v ./= grid.states.ρ
+
+    reconstruct_after_advection!(settings.thermo_variable, grid, constants)
+    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
     return
 end

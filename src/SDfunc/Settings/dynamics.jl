@@ -20,24 +20,53 @@ A struct representing the settings for coalescence.
 - `n0`: The initial real world droplet concentration.
 - `R0`: The initial seed radius of the droplets.
 """
-Base.@kwdef struct coag_settings{FT<:AbstractFloat}
-    Δt::FT = FT(1.0)
-    ΔV::FT = FT(1e6)
-    Ns::Int = 2^15# number of superdroplets
-    scale::FT = Ns * (Ns - 1) / 2 / (Ns / 2)
-    R_min::FT = FT(1e-9)
-    R_max::FT = FT(1e-3)
-    golovin_kernel_coeff::FT = FT(1.5e3)
-    hydrodynamic_collision_eff_func::Bool = false
-    kernel::Function = golovin # golovin, hydrodynamic
-    n0::FT = FT(2^23) # initial droplet concentration
-    R0::FT = FT(30.531e-6) # initial radius
+struct coag_settings{FT<:AbstractFloat, Kern}
+    Δt::FT
+    ΔV::FT
+    Ns::Int
+    scale::FT
+    R_min::FT
+    R_max::FT
+    golovin_kernel_coeff::FT
+    hydrodynamic_collision_eff_func::Bool
+    long_lin_coeff::FT
+    long_sq_coeff::FT
+    long_r_thresh::FT
+    kernel::Kern
+    n0::FT
+    R0::FT
+end
+
+function coag_settings{FT}(;
+        Δt::FT                          = FT(1.0),
+        ΔV::FT                          = FT(1e6),
+        Ns::Int                         = 2^15,
+        scale::FT                       = FT(Ns * (Ns - 1) / 2 / (Ns / 2)),
+        R_min::FT                       = FT(1e-9),
+        R_max::FT                       = FT(1e-3),
+        golovin_kernel_coeff::FT        = FT(1.5e3),
+        hydrodynamic_collision_eff_func::Bool = false,
+        long_lin_coeff::FT              = FT(5.78e3),
+        long_sq_coeff::FT               = FT(9.44e15),
+        long_r_thresh::FT               = FT(5e-5),
+        kernel                          = golovin,
+        n0::FT                          = FT(2^23),
+        R0::FT                          = FT(30.531e-6),
+    ) where {FT<:AbstractFloat}
+    coag_settings{FT, typeof(kernel)}(
+        Δt, ΔV, Ns, scale, R_min, R_max, golovin_kernel_coeff,
+        hydrodynamic_collision_eff_func, long_lin_coeff, long_sq_coeff,
+        long_r_thresh, kernel, n0, R0)
 end
 
 Base.@kwdef struct condensation_settings{FT<:AbstractFloat}
     Δt::FT = FT(1.0) 
-    activated::Bool = true # kohler or activated kohler
-    kappa::FT = FT(0.0) # hygroscopicity parameter
+    activated::Bool = true # kohler or activated kohler, doesn't do anything yet
+    #ammonium sulfate, Dziekan et al 2019 (from Petters and Kreidenweis (2007))
+    kappa::FT = FT(0.61) # default Dycoms
     ρ_solute::FT = FT(1.78e3) # default Dycoms
 
 end
+
+Base.broadcastable(x::coag_settings) = Ref(x)
+Base.broadcastable(x::condensation_settings) = Ref(x)

@@ -4,7 +4,7 @@
 #---------------------------------------------------------
 # SDM logic
 export adaptive_pαdt!, pair_Ps_adaptive!,compute_pαdt!,split_highest_multiplicity!,test_pairs!,pair_Ps!,sdm_update!
-
+export sdm_step!
 
 
 """
@@ -228,12 +228,48 @@ Split the superdroplet with the highest multiplicity into two equal parts, as pr
 """
 
 
-function split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
+# function split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
+#     if maximum(droplets.ξ) > 1
+#         while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
+#             argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
+#             droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
+#             droplets.X[argmin_i] = droplets.X[argmax_i]
+
+#             droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
+#         end
+#     elseif (maximum(droplets.ξ) <= 1)
+
+#         println("Highest superdroplet cannot be split")
+#         #right now, break the model until this situation gets handled
+#         if (maximum(droplets.ξ) < 1)
+#             error("Highest and Lowest Superdroplet have ξ==0")
+#         end
+
+#         #Later:remove superdroplet.. how to handle between cells?
+
+#         # # Cannot split highest multiplicity superdroplet, have to remove superdroplet from system
+#         # println("Superdroplet ", argmin(ξ), " has multiplicity of ", ξ[argmin(ξ)], ", removing from system")
+#         # deleteat!(R,argmin(ξ))
+#         # # deleteat!(M,argmin(ξ))
+#         # deleteat!(X,argmin(ξ))
+#         # deleteat!(ξ,argmin(ξ))
+#         # # Ns=Ns-1
+#     end
+#     return nothing
+# end
+
+
+
+function split_highest_multiplicity!(droplets::droplet_attributes_1d{FT}) where FT<:AbstractFloat
     if maximum(droplets.ξ) > 1
         while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
             argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
             droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
             droplets.X[argmin_i] = droplets.X[argmax_i]
+            droplets.dry_r3[argmin_i] = droplets.dry_r3[argmax_i]
+            droplets.cell_id[argmin_i] = droplets.cell_id[argmax_i]
+            droplets.z_loc[argmin_i] = droplets.z_loc[argmax_i]
+            droplets.w_prime[argmin_i] = droplets.w_prime[argmax_i]
 
             droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
         end
@@ -261,3 +297,62 @@ end
 
 
 
+
+
+
+
+#############
+
+@inline function sdm_step!(i, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+    pair = (coag_data.I[i], coag_data.I[i+1])
+    step_Ps!(i, pair, droplets,coag_data,kernel,coagsettings)
+end
+
+@inline function step_Ps!(i::Int, (j,k)::Tuple{Int,Int}, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+    cell = droplets.cell_id[j]
+    scale = coag_data.scale[cell]  # precomputed once per cell in coalescence_timestep! -- identical for every pair in this cell
+    pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
+    ϕ = rand()
+    coag_data.collision_rate_pair[i] = zero(FT)
+    if ϕ < pαdt
+        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data,i)
+    end
+end
+
+@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run_spatial,i::Int) where FT<:AbstractFloat
+
+    j,k = pair
+    if droplets.ξ[j] < droplets.ξ[k]
+        j,k = k,j
+    end
+
+    ξj, ξk = droplets.ξ[j], droplets.ξ[k]
+    # pα =  coag_data.pαdt[α]
+
+    pα_floor::FT = @fastmath floor(pα)
+    γ::FT  = ϕ < pα - pα_floor ? pα_floor +1 : pα_floor
+
+    if γ >= (floor_ξj_div_ξk = floor(ξj / ξk))
+        # coag_data.deficit[cell] += (γ - floor_ξj_div_ξk) * ξk
+        γ = floor_ξj_div_ξk
+    end
+
+    coag_data.collision_rate_pair[i] = γ * ξk
+    if ξj > γ * ξk
+        droplets.ξ[j] -= γ * ξk
+        droplets.X[k] = γ * droplets.X[j] + droplets.X[k]
+        droplets.dry_r3[k] = γ * droplets.dry_r3[j] + droplets.dry_r3[k]
+
+    else
+        
+        droplets.ξ[j] = floor(ξk / 2)
+        droplets.ξ[k] -= droplets.ξ[j]
+        droplets.X[k] = droplets.X[j] = γ *droplets.X[j] + droplets.X[k]
+        droplets.dry_r3[k] = droplets.dry_r3[j] = γ * droplets.dry_r3[j] + droplets.dry_r3[k]
+
+        if droplets.ξ[j] == 0
+            coag_data.lowest_zero[] = true
+        end
+    end
+    return nothing
+end

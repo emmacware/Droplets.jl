@@ -3,7 +3,8 @@
 #---------------------------------------------------------
 # KERNELS
 #---------------------------------------------------------
-export terminal_v,hydrodynamic,golovin
+export terminal_v,hydrodynamic,golovin,long1974, terminal_v_X
+include("hall_davis.jl")
 
 # terminal velocity of droplets (this should move..)
 """
@@ -19,26 +20,40 @@ Gunn and Kinzer, (1949), https://doi.org/10.1175/1520-0469(1949)006<0243:TTVOFF>
 The terminal velocity of the droplet in meters/second.
 
 """
-function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity 
+const _tv_d_table = [0.078,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.2,1.4,1.6,1.8,2.0,2.2,2.4,2.6,
+    2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.2,4.4,4.6,4.8,5.0,5.2,5.4,5.6,5.8] ./ 10  # diameter in cm
 
+const _tv_v_table = [18,27,72,117,162,206,247,287,327,367,403,464,517,565,609,649,690,
+    727,757,782,806,826,844,860,872,883,892,898,903,907,909,912,914,916,917]  # velocity in cm/s
 
-    if 2*r*100<0.0078
-        tv=1.2*10e6*(r*100)^2
-        tv = tv/100
-    else    
-        d_table = [0.078,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,1.2,1.4,1.6,1.8,2.0,2.2,2.4,2.6,
-            2.8,3.0,3.2,3.4,3.6,3.8,4.0,4.2,4.4,4.6,4.8,5.0,5.2,5.4,5.6,5.8]./10
+const _tv_interp = linear_interpolation(_tv_d_table, _tv_v_table, extrapolation_bc=Line())
 
-        v_table = [18,27,72,117,162,206,247,287,327,367,403,464,517,565,609,649,690,
-        727,757,782,806,826,844,860,872,883,892,898,903,907,909,912,914,916,917]
-
-        interpo_extrapo = linear_interpolation(d_table,v_table,extrapolation_bc=Line())
-        tv = interpo_extrapo(2*r*100)/100 # radius in meters to diameter in cm, then velocity cm->m
+function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
+    d_cm = 2 * r * 100  # radius in meters → diameter in cm
+    if d_cm < 0.0078
+        # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+        return 1.2e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
+    elseif d_cm > 0.58
+        return FT(_tv_interp(0.58) / 100)  # Gunn and Kinzer, need?
+    else
+        return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
     end
-    return tv
 end
 
-#not working correctly:
+function terminal_v_X(X::FT)::FT where FT<:AbstractFloat  # terminal velocity
+    d_cm = 2 * volume_to_radius(X) * 100  # radius in meters → diameter in cm
+    if d_cm < 0.0078
+        # return FT(1.2e7 * (r * 100)^2 / 100)  # Stokes regime (note: 10e6 == 1e7)
+        return 1.2e6 * (d_cm/2)^2 * 1e-2 #from Adele slides
+    elseif d_cm > 0.58
+        return FT(_tv_interp(0.58) / 100)  # Gunn and Kinzer, need?
+    else
+        return FT(_tv_interp(d_cm) / 100)  # cm/s → m/s
+    end
+end
+
+
+# #not working correctly:
 # #collision efficiency function
 # function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
 #     #Parameterization from Berry 1967
@@ -53,13 +68,115 @@ end
 #     G = (16.7/r)^8 +1 +0.004*r
 
 #     Y = 1+p+D/(p^F)+E/((1-p)^G)
-#     if Y<0
-#         Y=0
-#     end
+#     Y < 0 && (Y = 0)
+#     Y < 1 && (Y = 1)
+#     # Y > 1 && error("Collision efficiency cannot be greater than 1. Check the input radii.")
 
 #     return Y
 # end
 
+@inline hall_davis_idx(R::FT) where FT<:AbstractFloat = R <= FT(100) ? Int(R) : 100 + Int((R - FT(100)) / FT(10))
+
+@inline function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
+    r_max = FT(1100)
+
+    # meters → micrometers
+    r1 = R1 * FT(1e6)
+    r2 = R2 * FT(1e6)
+
+    r1 = min(r1, r_max - FT(1e-6))
+    r2 = min(r2, r_max - FT(1e-6))
+
+    # lower grid point and spacing for each radius
+    if r1 >= FT(100)
+        x0 = floor(r1 / FT(10)) * FT(10);  dx = FT(10)
+    else
+        x0 = floor(r1);                     dx = FT(1)
+    end
+
+    if r2 >= FT(100)
+        y0 = floor(r2 / FT(10)) * FT(10);  dy = FT(10)
+    else
+        y0 = floor(r2);                     dy = FT(1)
+    end
+
+
+    ix0 = hall_davis_idx(x0); ix1 = ix0 + 1
+    iy0 = hall_davis_idx(y0); iy1 = iy0 + 1
+
+    wx = r1 - x0
+    wy = r2 - y0
+
+    @inbounds return (
+        hall_davis_matrix[ix0+1, iy0+1] * (dx - wx) * (dy - wy) +
+        hall_davis_matrix[ix1+1, iy0+1] *       wx  * (dy - wy) +
+        hall_davis_matrix[ix0+1, iy1+1] * (dx - wx) *       wy  +
+        hall_davis_matrix[ix1+1, iy1+1] *       wx  *       wy
+    ) / (dx * dy)
+end
+
+# function collision_efficiency(r1::FT, r2::FT) where {FT<:AbstractFloat}
+
+#     # ------------------------------------------------------------
+#     # Ensure ordering:
+#     # R = collector radius (larger)
+#     # r = collected radius (smaller)
+#     # ------------------------------------------------------------
+#     R = max(r1, r2)
+#     r = min(r1, r2)
+
+#     # convert to microns
+#     Rμ = R * FT(1e6)
+#     rμ = r * FT(1e6)
+
+#     # radius ratio
+#     p = rμ / Rμ
+
+#     # ------------------------------------------------------------
+#     # Tiny droplets: Davis/Klett-style suppression
+#     # ------------------------------------------------------------
+#     if Rμ < 20
+
+#         # strong hydrodynamic deflection
+#         Ec = FT(0.001) * (Rμ / 10)^2 * p^1.5
+
+#         return clamp(Ec, zero(FT), one(FT))
+#     end
+
+#     # ------------------------------------------------------------
+#     # Intermediate cloud droplets: Hall-like growth
+#     # ------------------------------------------------------------
+#     if Rμ < 100
+
+#         # empirical smooth growth
+#         Ec = FT(0.01) *
+#              (Rμ / 20)^1.8 *
+#              p^0.7
+
+#         return clamp(Ec, zero(FT), one(FT))
+#     end
+
+#     # ------------------------------------------------------------
+#     # Rain-drop regime
+#     # ------------------------------------------------------------
+#     Ec = FT(0.8) + FT(0.2) * tanh((Rμ - 100) / 50)
+
+#     return clamp(Ec, zero(FT), one(FT))
+# end
+
+
+# function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
+#     #Parameterization from Simmel et al., 2002
+#     Rj_cm = max(R1,R2)*1e4
+#     Rk_cm = min(R1,R2)*1e4
+#     Ecoal = 1
+#     if Rk_cm < 50e-4
+#         Ecol = max(4.5*1e4*Rk_cm^2(1-3e-4/Rj_cm),1e-3)
+#     else
+#         Ecol = 1
+#     end
+#     return Ecol
+# end
 #---------------------------------------------------------
 # Coalescence Kernels
 #---------------------------------------------------------
@@ -105,4 +222,27 @@ Taken from Golovin (1963), this kernel has an analytic solution for the Smulocho
 """
 @inline function golovin(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
     return settings.golovin_kernel_coeff *(droplets.X[j] + droplets.X[k])# Xsum
+end
+
+"""
+    long1974(droplets, (j, k), settings)
+
+Piecewise collision kernel from Eq. (11) in Long (1974),
+https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
+
+    K(x, x') = sq_coeff * (x_lg² + x_sm²)   if r_lg < r_thresh
+    K(x, x') = lin_coeff * (x_lg + x_sm)     if r_lg ≥ r_thresh
+
+where x is droplet volume and r_lg is the radius of the larger droplet.
+Default parameters: lin_coeff = 5.78e3 s⁻¹, sq_coeff = 9.44e15 m⁻³ s⁻¹, r_thresh = 5e-5 m.
+"""
+@inline function long1974(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
+    v_lg = max(droplets.X[j], droplets.X[k])
+    v_sm = min(droplets.X[j], droplets.X[k])
+    r_lg = volume_to_radius(v_lg)
+    if r_lg < settings.long_r_thresh
+        return settings.long_sq_coeff * (v_lg^2 + v_sm^2)
+    else
+        return settings.long_lin_coeff * (v_lg + v_sm)
+    end
 end
