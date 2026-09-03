@@ -211,7 +211,6 @@ function coalescence_reshuffle_and_step!(::Serial, droplets::droplet_attributes_
         isempty(droplets.grid_range[g]) && continue
         shuffle!(@view coag_data.I[droplets.grid_range[g]])
     end
-    # only the real Ns/2 pairs get iterated, instead of all Ns droplets with a skip-check
     for k in eachindex(coag_data.pair_starts)
         sdm_step!(coag_data.pair_starts[k], droplets, coag_data, kernel, settings)
     end
