@@ -304,28 +304,22 @@ end
 #############
 
 @inline function sdm_step!(i, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
-    if coag_data.first_in_pair[i] == false
-        return nothing
-    end
     pair = (coag_data.I[i], coag_data.I[i+1])
-    step_Ps!(pair, droplets,coag_data,kernel,coagsettings)
+    step_Ps!(i, pair, droplets,coag_data,kernel,coagsettings)
 end
 
-@inline function step_Ps!((j,k)::Tuple{Int,Int}, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
+@inline function step_Ps!(i::Int, (j,k)::Tuple{Int,Int}, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     cell = droplets.cell_id[j]
-    # if droplets.grid_range[cell] == nothing
-    #     return nothing
-    # end
-    Ns_c = length(droplets.grid_range[cell]) #check
-    scale = Ns_c * (Ns_c - 1)/2 / div(Ns_c, 2)
+    scale = coag_data.scale[cell]  # precomputed once per cell in coalescence_timestep! -- identical for every pair in this cell
     pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
     ϕ = rand()
-    if ϕ < pαdt 
-        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data,cell)
+    coag_data.collision_rate_pair[i] = zero(FT)
+    if ϕ < pαdt
+        sdm_update!((j,k), pαdt,ϕ, droplets,coag_data,i)
     end
 end
 
-@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run_spatial,cell::Int) where FT<:AbstractFloat
+@inline function sdm_update!(pair::Tuple{Int,Int},pα::FT,ϕ::FT, droplets::droplet_attributes_1d{FT},coag_data::coagulation_run_spatial,i::Int) where FT<:AbstractFloat
 
     j,k = pair
     if droplets.ξ[j] < droplets.ξ[k]
@@ -343,7 +337,7 @@ end
         γ = floor_ξj_div_ξk
     end
 
-    coag_data.collision_rate[cell] += γ * ξk
+    coag_data.collision_rate_pair[i] = γ * ξk
     if ξj > γ * ξk
         droplets.ξ[j] -= γ * ξk
         droplets.X[k] = γ * droplets.X[j] + droplets.X[k]

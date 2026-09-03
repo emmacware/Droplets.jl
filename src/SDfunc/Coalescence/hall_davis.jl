@@ -2026,6 +2026,23 @@ const hall_davis_efficiencies = [0, 0, 0, 0, 0, 0.0218, 0, 0, 0.014736, 0.024245
       
 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
       
-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 
-      
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+
 1]
+
+# hall_davis_efficiencies is triangular, unpack once
+# into a full symmetric matrix 
+@inline function hall_davis_tidx(i::Int, j::Int)::Int
+    ii, jj = i >= j ? (i, j) : (j, i)
+    return ii * (ii + 1) ÷ 2 + jj + 1
+end
+
+const hall_davis_table_n = Int(round((-1 + sqrt(1 + 8*length(hall_davis_efficiencies))) / 2))  # 201: indices 0..200
+
+const hall_davis_matrix = let
+    M = Matrix{eltype(hall_davis_efficiencies)}(undef, hall_davis_table_n, hall_davis_table_n)
+    for i in 0:hall_davis_table_n-1, j in 0:hall_davis_table_n-1
+        M[i+1, j+1] = hall_davis_efficiencies[hall_davis_tidx(i, j)]
+    end
+    M
+end

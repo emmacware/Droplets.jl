@@ -26,7 +26,7 @@ const dt = 1.0 #s
 const dt_coag = 0.1
 const dt_cond = 0.1
 const dt_rad = 1.0 #s, radiative transfer (RTE) call cadence; heating rate is still applied every dt
-const Ns_per_grid = 200
+const Ns_per_grid = 64
 seed = 42
 Random.seed!(seed)
 const t_max = 3600*6#s
@@ -69,7 +69,7 @@ dist = MixtureModel(LogNormal, [(log(m1), σ1), (log(m2), σ2)], [n1/n0, n2/n0])
 
 
 #Settings Structs
-spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=100.0,
+spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=1.0,
     # weighted_droplet_allocation = false, # uniform Ns/nz per cell instead of qv-weighted seeding
 )
 
@@ -105,6 +105,7 @@ base_scm = (
     turbulent_droplet_diffusion_on = DynON(),
     # droplet_diffusion_scheme    = WellMixedDropletDiffusion(), # has the well-mixed drift correction + no qv-threshold inversion wall (see nonlocal.jl); or OUDropletDiffusion() (no drift correction, has the wall), WeilDropletDiffusion(), VisserDropletDiffusion(), NoDropletDiffusion()
     keep_grid_filled            = DynON(), # disable donor-cell SD reseeding of thin layers
+    coag_threading                = Parallel(), # or Serial() for single-threaded
 )
 
 scmspinupsettings = scm_settings{FT}(; base_scm...,
@@ -177,7 +178,7 @@ radius_bins_edges = 10 .^ range(log10(1*1e-8), log10(1e2*1e-6), length=num_bins+
 # radius_bins_edges = range(0.5*1e-6,100e-6, length=num_bins+1) 
 
 runsettings = run_settings{FT}(num_bins=num_bins,radius_bins_edges=radius_bins_edges,normalize_bins_dlnr=false,binning_method=mass_density_lnr)
-seeds = 2
+seeds = 1
 
 
 for num_seeds in 1:seeds
@@ -239,7 +240,8 @@ for num_seeds in 1:seeds
                     # if i*dt % 600 == 0
                         # droplets_snapshots[Int(div(i*dt,3600))] = deepcopy(droplets)
                     end
-
+                    #18.330 ms (2474 allocations: 1.18 MiB)
+                    #12.075 ms (2471 allocations: 1.11 MiB)
                     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
                     coagdata,conddata,raddata,turbdata,
                     diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmrunsettings,tkesettings,absliq_r_interp,i)
@@ -286,28 +288,41 @@ penv = plot_env_profiles(grid)
 # #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid),plot_title="REM: $(scmsettings.REM)")#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
 
-num = ensemble_output[(false, n0,1)].cloud_number * 1e-6
-nummasked = ifelse.(num .< 20, NaN, num)
-heatmap(nummasked,clims=(0,100))
+# using Profile
+# Profile.clear()
+# @profile  for i in 1:1000
+#     if i*dt % 100 == 0
+#         println("Timestep: ", i*dt)
+#     end
+    # single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
+    #                 coagdata,conddata,raddata,turbdata,
+    #                 diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,constants,scmsettings,tkesettings,absliq_r_interp,i)
+# end
+# open("profile.txt", "w") do io
+#     Profile.print(io; format=:flat, sortedby=:count, mincount=20)
+# end
+# num = ensemble_output[(false, n0,1)].cloud_number * 1e-6
+# nummasked = ifelse.(num .< 20, NaN, num)
+# heatmap(nummasked,clims=(0,100))
 
-plot()
-plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),   scale=1e-6, axis=:height, show_ribbon=false,
-    t_window=(4,5), label="", color=:darkturquoise,
-    linestyle=:dot,   linewidth=2)
+# plot()
+# plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),   scale=1e-6, axis=:height, show_ribbon=false,
+#     t_window=(4,5), label="", color=:darkturquoise,
+#     linestyle=:dot,   linewidth=2)
 
-plot()
-twindow = (0,1)
-plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),
-    scale=1e-6, axis=:height, show_ribbon=false,
-    t_window=twindow, label=twindow,
-    linestyle=:dot,   linewidth=2)
-heatmap(grid.output.cloud_number)
+# plot()
+# twindow = (0,1)
+# plot_ensemble_field(:cloud_number, ensemble_output, grid; key_filter=(false, n0),
+#     scale=1e-6, axis=:height, show_ribbon=false,
+#     t_window=twindow, label=twindow,
+#     linestyle=:dot,   linewidth=2)
+# heatmap(grid.output.cloud_number)
 
 
-tCpR = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : mean(v) end, nummasked, dims=1)
-#time series mean of only values above 20, N_cloud (threshold applied after run-averaging)
-plot(tCpR', label="No REM", color=:aquamarine4, linewidth=2)
+# tCpR = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : mean(v) end, nummasked, dims=1)
+# #time series mean of only values above 20, N_cloud (threshold applied after run-averaging)
+# plot(tCpR', label="No REM", color=:aquamarine4, linewidth=2)
 
-#time series of integrated tke (ensemble_output[(false, n0,1)].e) over Height
-tke_integrated = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : sum(v) end, ensemble_output[(false, n0,1)].e*dz, dims=1)
-plot(tke_integrated', label="No REM", color=:aquamarine4, linewidth=2, xlabel="Time (hr)", ylabel="Integrated TKE (m²/s²)", title="Integrated TKE over Height")
+# #time series of integrated tke (ensemble_output[(false, n0,1)].e) over Height
+# tke_integrated = mapslices(x -> begin v = filter(!isnan, x); isempty(v) ? NaN : sum(v) end, ensemble_output[(false, n0,1)].e*dz, dims=1)
+# plot(tke_integrated', label="No REM", color=:aquamarine4, linewidth=2, xlabel="Time (hr)", ylabel="Integrated TKE (m²/s²)", title="Integrated TKE over Height")

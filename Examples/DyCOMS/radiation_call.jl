@@ -2,7 +2,7 @@ using RRTMGP
 using NCDatasets
 using ClimaComms
 using RRTMGP: RRTMGPGridParams
-using RRTMGP.Vmrs
+using RRTMGP.VolumeMixingRatios
 using RRTMGP.LookUpTables
 using RRTMGP.AtmosphericStates
 using RRTMGP.Optics
@@ -12,7 +12,7 @@ using RRTMGP.Fluxes
 using RRTMGP.AngularDiscretizations
 using RRTMGP.RTE
 using RRTMGP.RTESolver
-using RRTMGP.GrayUtils
+using RRTMGP.GrayAtmosphere
 import RRTMGP.Parameters.RRTMGPParameters
 
 #these inputs have the same names as the scm.jl file so if you run that first you can
@@ -54,39 +54,42 @@ function read_radiation_tables()
 end
 
 
-struct radiation_clima_data_helper{FT<:AbstractFloat} 
-    context::ClimaComms.AbstractCommsContext
-    device::ClimaComms.AbstractDevice
-    DA::Type{<:AbstractArray}
+struct radiation_clima_data_helper{FT<:AbstractFloat, C, D, TDA, LLW, LLWC, LSW, LSWC, PS, GP, SLW, SSW}
+    context::C
+    device::D
+    DA::TDA
     nlay::Int
     nlev::Int
     ncol::Int
     ngas::Int
     nband_lw::Int
     nband_sw::Int
-    lookup_lw::LookUpLW
-    lookup_lw_cld::LookUpCld
-    lookup_sw::LookUpSW
-    lookup_sw_cld::LookUpCld
+    lookup_lw::LLW
+    lookup_lw_cld::LLWC
+    lookup_sw::LSW
+    lookup_sw_cld::LSWC
     idx_gases::Dict{String,Int}
     idx_h2o::Int
-    paramset::RRTMGPParameters
-    grid_params::RRTMGPGridParams
+    paramset::PS
+    grid_params::GP
     lat::Union{FT,Nothing}
     lon::Union{FT,Nothing}
-    slv_lw::TwoStreamLWRTE
-    slv_sw::TwoStreamSWRTE
+    slv_lw::SLW
+    slv_sw::SSW
 
     function radiation_clima_data_helper(nz::Int, FT::Type{<:AbstractFloat})
         nlay = nz + 10
         nlev = nlay + 1
         ncol = 1
         lookup_lw,lookup_lw_cld,lookup_sw,lookup_sw_cld,idx_gases = read_radiation_tables()
-        context = ClimaComms.context()
+        # This driver always runs ncol = 1 (single-column model); multithreading a
+        # loop of length 1 has nothing to parallelize and only adds per-g-point
+        # `Threads.@threads` task-spawn overhead (and allocations) to every solve.
+        context = ClimaComms.context(ClimaComms.CPUSingleThreaded())
         device = ClimaComms.device(context)
         DA = ClimaComms.array_type(device)
         param_set = RRTMGPParameters(9.80665, 0.028964, 0.018016, 8.3144598, 0.28571428571, 5.67e-8, 6.02214076e+23)
-        grid_params = RRTMGPGridParams(FT; context, nlay, ncol)
+        grid_params = RRTMGPGridParams(FT; context, domain_nlay = nlay, ncol)
         ngas = length(idx_gases)
         nband_lw = LookUpTables.get_n_bnd(lookup_lw)
         nband_sw = LookUpTables.get_n_bnd(lookup_sw)
@@ -101,16 +104,28 @@ struct radiation_clima_data_helper{FT<:AbstractFloat}
         # sfc_emis = fill(FT(0.98), 1)
         sfc_emis = fill(FT(0.98), 1)
         inc_flux = nothing
-        slv_lw = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
-        
-        return new{FT}(context,device,DA,nlay, nlev, ncol, ngas, nband_lw, nband_sw, lookup_lw, lookup_lw_cld, lookup_sw, 
+        slv_lw0 = TwoStreamLWRTE(grid_params; params = param_set, sfc_emis, inc_flux)
+        # Attach a per-band flux buffer so `solve_lw!` retains band-resolved
+        # up/down fluxes (used below for the cloud radiative heating term),
+        # matching the shape `(nlev, ncol, n_bnd)`.
+        band_flux_lw = FluxBand(grid_params, nband_lw)
+        slv_lw = TwoStreamLWRTE(
+            slv_lw0.context, slv_lw0.op, slv_lw0.src, slv_lw0.bcs,
+            slv_lw0.fluxb, slv_lw0.flux, band_flux_lw, slv_lw0.state_cache,
+        )
+
+        return new{
+            FT, typeof(context), typeof(device), typeof(DA),
+            typeof(lookup_lw), typeof(lookup_lw_cld), typeof(lookup_sw), typeof(lookup_sw_cld),
+            typeof(param_set), typeof(grid_params), typeof(slv_lw), typeof(slv_sw),
+        }(context,device,DA,nlay, nlev, ncol, ngas, nband_lw, nband_sw, lookup_lw, lookup_lw_cld, lookup_sw,
         lookup_sw_cld, idx_gases, idx_gases["h2o"],
         param_set, grid_params, lat, lon, slv_lw, slv_sw)
     end
 end
 
 
-struct radiation_data{FT<:AbstractFloat}
+struct radiation_data{FT<:AbstractFloat, AS, CR}
     flux_up_lw::Array{FT,2}
     flux_dn_lw::Array{FT,2}
     flux_up_sw::Array{FT,2}
@@ -121,11 +136,11 @@ struct radiation_data{FT<:AbstractFloat}
     flux_up_arr::Array{FT, 2}
     flux_dn_arr::Array{FT, 2}
     hr_lay::Array{FT, 2}
-    atmospheric_state::AtmosphericState
+    atmospheric_state::AS
     flux_net_droplet::Matrix{FT}
     cloud_heating_delta::Vector{FT}
     cond_rad_term::Vector{FT}
-    CArad::radiation_clima_data_helper{FT}
+    CArad::CR
 
 
     function radiation_data(::Type{FT},nsd,grid,constants) where FT<:AbstractFloat
@@ -168,7 +183,9 @@ struct radiation_data{FT<:AbstractFloat}
         vmr = Vmr(CArad.DA(vmrat))
         ice_rgh = 2
         #Clima Structs
-        metric_scaling = CArad.DA(one.(CArad.slv_sw.flux.flux_up))
+        # `apply_metric_scaling!` expects a vertical-first `(nlev, ncol)` array,
+        # regardless of the internal (column-first) layout of the flux compute buffers.
+        metric_scaling = CArad.DA(ones(FT, nlev, ncol))
         cloud_state = CloudState(zeros(laydim...),zeros(laydim...),zeros(laydim...),zeros(laydim...),
                 zeros(laydim...),falses(nlay,ncol),falses(nlay,ncol),MaxRandomOverlap(),ice_rgh)
 
@@ -179,9 +196,9 @@ struct radiation_data{FT<:AbstractFloat}
         cond_rad_term = zeros(FT, nsd)
         
 
-        return new{FT}(zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),
-        layerdata, metric_scaling, 
-        zeros(FT,nlev,n_bnd),zeros(FT,nlev,n_bnd), zeros(laydim...), as, 
+        return new{FT, typeof(as), typeof(CArad)}(zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),
+        layerdata, metric_scaling,
+        zeros(FT,nlev,n_bnd),zeros(FT,nlev,n_bnd), zeros(laydim...), as,
         zeros(FT, Nz, n_bnd), cloud_heating_delta, cond_rad_term, CArad)
 
         
@@ -219,6 +236,25 @@ function fill_liquid_water_diagnostics(grid::scm_eulerian_arrays{FT}, diagnostic
     @. as.cloud_state.mask_lw = as.cloud_state.cld_frac == 1
     as.cloud_state.mask_sw .= as.cloud_state.mask_lw
 
+    return nothing
+end
+
+# Function barrier for the ibnd/glay loop in compute_radiative_fluxes!: `planck` and
+# `mask_lw` arrive from callers holding them as abstractly-typed fields (see the note
+# at the call site below), so this function's own parameters get freshly specialized
+# on their actual concrete runtime types instead of inheriting that instability.
+function compute_flux_net_droplet!(raddata, planck, mask_lw, t_lay, n_bnd::Int, nz::Int)
+    t_planck = planck.t_planck
+    tot_planck = planck.tot_planck
+    raddata.flux_net_droplet .= 0
+    @inbounds for ibnd in 1:n_bnd
+        totplnk = view(tot_planck, :, ibnd)
+        for glay in 1:nz
+            mask_lw[glay, 1] || continue
+            bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
+            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.25 * (raddata.flux_up_arr[glay-1, ibnd] + raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])
+        end
+    end
     return nothing
 end
 
@@ -269,30 +305,36 @@ function compute_radiative_fluxes!(grid::scm_eulerian_arrays{FT},spatialsettings
 
 
     #βe = zeros(FT,nlev,256)
-    solve_lw!(CArad.slv_lw, raddata.flux_up_arr, raddata.flux_dn_arr, as, CArad.lookup_lw, CArad.lookup_lw_cld, nothing, raddata.metric_scaling)
+    solve_lw!(CArad.slv_lw, as, CArad.lookup_lw, CArad.lookup_lw_cld, nothing, raddata.metric_scaling)
     # solve_sw!(CArad.slv_sw, as, CArad.lookup_sw, CArad.lookup_sw_cld, nothing,raddata.metric_scaling)
 
-    raddata.flux_net .= CArad.slv_lw.flux.flux_net #.+ CArad.slv_sw.flux.flux_net
+    # `solve_lw!` fills CArad.slv_lw.band_flux (nlev, ncol, n_bnd); ncol == 1 here.
+    raddata.flux_up_arr .= view(CArad.slv_lw.band_flux.flux_up, :, 1, :)
+    raddata.flux_dn_arr .= view(CArad.slv_lw.band_flux.flux_dn, :, 1, :)
+
+    # `flux_net` is stored column-first (ncol, nlev); raddata expects vertical-first (nlev, ncol).
+    # An explicit loop (rather than `transpose(...)` broadcast) avoids a few bytes of
+    # per-call allocation from the lazy-transpose wrapper on Julia <= 1.11.
+    flux_net_lw = CArad.slv_lw.flux.flux_net
+    @inbounds for gcol in 1:ncol, ilev in 1:size(raddata.flux_net, 1)
+        raddata.flux_net[ilev, gcol] = flux_net_lw[gcol, ilev]
+    end
+    #.+ CArad.slv_sw.flux.flux_net
     cp_d_ = constants.Cp_air#FT(RRTMGP.Parameters.cp_d(param_set))
     grav_ = constants.gconst#FT(RRTMGP.Parameters.grav(param_set))
 
     compute_gray_heating_rate!(device,raddata.hr_lay,as.p_lev,ncol,nlay,raddata.flux_net,cp_d_,grav_)
 
     ##Add in other updates
-    t_planck  = CArad.lookup_lw.planck.t_planck
-    tot_planck = CArad.lookup_lw.planck.tot_planck
-    mask_lw   = as.cloud_state.mask_lw
-    
-    raddata.flux_net_droplet .= 0
-    @inbounds for ibnd in 1:n_bnd
-        totplnk = view(tot_planck, :, ibnd)
-        for glay in 1:grid.nz
-            mask_lw[glay, 1] || continue
-            bb_flux = π * Optics.interp1d_equispaced(t_lay[glay, 1], t_planck, totplnk)
-            raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.25 * (raddata.flux_up_arr[glay-1, ibnd] + raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay, ibnd] + raddata.flux_dn_arr[glay+1, ibnd])       
-            # raddata.flux_net_droplet[glay, ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay, ibnd] + raddata.flux_dn_arr[glay, ibnd])       
-         end
-    end
+    # CArad.lookup_lw and raddata.atmospheric_state are both declared with their
+    # abstract supertypes (no type params) in radiation_clima_data_helper/radiation_data,
+    # so accessing them -- and anything chained off them, e.g. t_planck below -- is
+    # type-unstable. Rather than reparametrizing those structs (which would ripple
+    # through every signature that names them), push the hot ibnd/glay loop through a
+    # function barrier: compute_flux_net_droplet! gets called once with these
+    # abstractly-typed values, but Julia specializes its *body* on their actual
+    # concrete runtime types, so the loop inside it is fully concrete.
+    compute_flux_net_droplet!(raddata, CArad.lookup_lw.planck, as.cloud_state.mask_lw, t_lay, n_bnd, grid.nz)
 
     return nothing
 end

@@ -22,39 +22,44 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     output_idx = Int(floor(i*dt/spatialsettings.dt_output) +1)
     n_output = spatialsettings.dt_output / dt
     
-
+    #316.708 μs (0 allocations: 0 bytes)
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
     # or i = 1
     if i % n_output == 0 || i == 1
+        #11.666 μs (18 allocations: 10.67 KiB)
         scm_fill_diagnostic_output(grid,coagdata,conddata,raddata,spatialsettings,constants, output_idx, turbdata)
     end
 
-
+    # 3.679 ms (2 allocations: 128 bytes) #REM off
     radiation_function!(scmsettings.radiation,grid, spatialsettings, diagnosticsettings, constants, raddata, dt, i, scmsettings.n_rad)
-
 
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
     for _ in 1:scmsettings.n_cond
+        #911.292 μs (48 allocations: 20.97 KiB)
         condensation_time_step_spatial!(scmsettings.condensation,droplets, grid.states, nz, dt/scmsettings.n_cond, conddata, constants, condensationsettings, spatialsettings, raddata,scmsettings,absliq_r_interp, i*dt)
     end
 
 
 
-    for _ in 1:scmsettings.n_coag
-        coalescence_timestep!(scmsettings.coalescence,scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings)
-    end
 
+    coalescence_timestep!(scmsettings.coalescence,scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings, scmsettings.n_coag)
+
+    #2.990 μs (12 allocations: 5.31 KiB)
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
+    #10.000 μs (9 allocations: 4.28 KiB)
     compute_ql_at_cell!.(grid.states, 1:nz,constants)
+
     grid.states.qt_tmp .= grid.states.qv + grid.states.ql_tmp
     grid.states.θl_tmp .= θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
 
 
     # Environmental advection
+    #  160.250 μs (1799 allocations: 779.50 KiB)
     turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
     # compute_ql_at_cell!.(grid.states, 1:nz,constants)
     # qt = grid.states.qv .+ grid.states.ql_tmp
     # θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+    #(32.916 μs (2 allocations: 1.06 KiB)
     compute_ql_all_cells!(grid.states, constants)
     if tkesettings.thermo_variable isa ThetalQtVar
         # turbulent diffusion above ran on θl_tmp/qt_tmp (see diffuse_fields! in tke.jl);
@@ -65,30 +70,23 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
         grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     end
+    #88.291 ns (1 allocation: 64 bytes)
     update_theta!(scmsettings.density_feedback, grid, constants)
+    #(3.010 μs (1 allocation: 64 bytes))
     update_density!(scmsettings.density_feedback, grid, constants)
 
-
+    #33.167 μs (24 allocations: 13.30 KiB)
     mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
+    # 197.083 μs (16 allocations: 704 bytes)
     update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
     
-    # fill_grid_ranges!(droplets)
-    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
-    # grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
-    # grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
-    # ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
 
-    # update_droplet_positions!(scmsettings.motion,DynOFF(),scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
-
-    # recycle_precipitation! and keep_layer_filled! each refresh grid_range (via
-    # fill_grid_ranges!, which sorts droplets.I by cell_id) themselves when DynON;
-    # recycle_top_escape! doesn't touch grid_range/order at all. So no sort is needed
-    # here -- only the final fill_grid_ranges! below, to leave grid_range consistent
-    # for the next timestep regardless of which of these ran.
+    #(28.000 μs (49 allocations: 928 bytes))
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
     recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)
+    #18.833 μs (53 allocations: 1.03 KiB)
     keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants, min_count = Int(floor(1.3 * coagsettings.Ns/spatialsettings.Nz)))
-
+    #  12.916 μs (0 allocations: 0 bytes)
     fill_grid_ranges!(droplets)
 
     return nothing

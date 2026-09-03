@@ -130,14 +130,21 @@ for i in 1:Int(spatialsettings.t_max / dt)
     end
 
     rho_w_t = prescribed_rho_w(i * dt)
-    grid.wind.w .= rho_w_t
+    grid.wind.w .= rho_w_t #says w but is really just advector, might namechange later
     prescribed_w(z) = rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
-    # grid.wind.w .= prescribed_w.(grid.centers_z)
     single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
     coagdata,conddata,raddata,turbdata,
     diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,kid_constants,scmsettings,tkesettings,absliq_r_interp,i)
 
 end
+
+# #3.869 ms (20903 allocations: 4.21 MiB)
+# rho_w_t = prescribed_rho_w(20)
+# grid.wind.w .= rho_w_t
+# prescribed_w(z) = rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
+# @btime  single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
+# coagdata,conddata,raddata,turbdata,
+# diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,kid_constants,scmsettings,tkesettings,absliq_r_interp,20)
 
 penv = plot_env_profiles(grid, kid_constants)
 #put tkesettings.turbulence_scheme in the title

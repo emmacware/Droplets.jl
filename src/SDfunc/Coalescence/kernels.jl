@@ -75,7 +75,9 @@ end
 #     return Y
 # end
 
-function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
+@inline hall_davis_idx(R::FT) where FT<:AbstractFloat = R <= FT(100) ? Int(R) : 100 + Int((R - FT(100)) / FT(10))
+
+@inline function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
     r_max = FT(1100)
 
     # meters → micrometers
@@ -98,31 +100,18 @@ function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
         y0 = floor(r2);                     dy = FT(1)
     end
 
-    x1 = x0 + dx
-    y1 = y0 + dy
 
-    # radius (μm) → 0-based table index
-    idx(R) = R <= FT(100) ? Int(R) : 100 + Int((R - FT(100)) / FT(10))
+    ix0 = hall_davis_idx(x0); ix1 = ix0 + 1
+    iy0 = hall_davis_idx(y0); iy1 = iy0 + 1
 
-    # (i, j) → 1-based index into triangular-packed vector
-    tidx(i, j) = let ii = max(i, j), jj = min(i, j)
-        ii * (ii + 1) ÷ 2 + jj + 1
-    end
-
-    i00 = tidx(idx(x0), idx(y0))
-    i10 = tidx(idx(x1), idx(y0))
-    i01 = tidx(idx(x0), idx(y1))
-    i11 = tidx(idx(x1), idx(y1))
-
-    # bilinear interpolation
     wx = r1 - x0
     wy = r2 - y0
 
-    return (
-        hall_davis_efficiencies[i00] * (dx - wx) * (dy - wy) +
-        hall_davis_efficiencies[i10] *       wx  * (dy - wy) +
-        hall_davis_efficiencies[i01] * (dx - wx) *       wy  +
-        hall_davis_efficiencies[i11] *       wx  *       wy
+    @inbounds return (
+        hall_davis_matrix[ix0+1, iy0+1] * (dx - wx) * (dy - wy) +
+        hall_davis_matrix[ix1+1, iy0+1] *       wx  * (dy - wy) +
+        hall_davis_matrix[ix0+1, iy1+1] * (dx - wx) *       wy  +
+        hall_davis_matrix[ix1+1, iy1+1] *       wx  *       wy
     ) / (dx * dy)
 end
 

@@ -188,10 +188,10 @@ struct condensation_data{FT<:AbstractFloat}
     condensation_rad_net::Vector{FT}
     condensation_rad_abs::Vector{FT}
     vol_change_helper::Vector{FT}
-    bisection_calls::Vector{Int}
-    bisection_maxdepth_hits::Vector{Int}
-    bisection_maxdepth_hits_growth::Vector{Int}
-    bisection_maxdepth_hits_shrink::Vector{Int}
+    droplet_vol_change::Vector{FT}
+    S_env_cell::Vector{FT}
+    c_cell::Vector{FT}
+    radcoeff_cell::Vector{FT}
 end
 
 function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_data{FT} where FT<:AbstractFloat
@@ -199,12 +199,12 @@ function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_da
     condensation_rad_net = zeros(FT, num_levels)
     condensation_rad_abs = zeros(FT, num_levels)
     vol_change_helper = zeros(FT, num_levels)
-    bisection_calls = zeros(Int, num_levels)
-    bisection_maxdepth_hits = zeros(Int, num_levels)
-    bisection_maxdepth_hits_growth = zeros(Int, num_levels)
-    bisection_maxdepth_hits_shrink = zeros(Int, num_levels)
-    return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs,vol_change_helper,
-        bisection_calls, bisection_maxdepth_hits, bisection_maxdepth_hits_growth, bisection_maxdepth_hits_shrink)
+    droplet_vol_change = zeros(FT, nsd)
+    S_env_cell = zeros(FT, num_levels)
+    c_cell = zeros(FT, num_levels)
+    radcoeff_cell = zeros(FT, num_levels)
+    return condensation_data{FT}(condensation_src, condensation_rad_net, condensation_rad_abs,vol_change_helper,droplet_vol_change,
+        S_env_cell, c_cell, radcoeff_cell)
 end
 
 struct turbulence_data{FT<:AbstractFloat} 
