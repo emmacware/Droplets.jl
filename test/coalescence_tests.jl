@@ -1,6 +1,5 @@
 using Test
 using Droplets
-using Combinatorics
 using Random
 
 FT = Float64

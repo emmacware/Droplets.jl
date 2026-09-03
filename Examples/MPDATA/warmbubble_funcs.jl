@@ -5,12 +5,6 @@ for i in 1:10, j in 1:10
     matrix[i,j] = i+j
 end
 
-# matrix_arrays = (lap_tmp = zeros((2,10,10)),
-#                 tmp_uvw = zeros((2,10,10)))
-
-# laplacian(matrix, false, matrix_arrays, 20.0, 20.0,halo=2)
-# grad(matrix, 1,20.0,halo=2)
-
 function grad(phi, axis,dl; halo::Int=1)
     size_dim1, size_dim2 = size(phi)
     xchng_pres_old!(phi, halo)
@@ -83,10 +77,6 @@ function pressure_solver_loop_body!(ARRAYS, converged,k_iters=4,error_tol=1e-7/1
         idx_interior = CartesianIndices((2:nx+1, 2:ny+1))
     
         for v in 1:k_iters
-            # compute norm of laplacian error
-            # lap_p_err_v = @view ARRAYS.lap_p_err[v,:, :]
-            # err_view    = @view ARRAYS.err[2:nx+1, 2:ny+1]
-            
             tmp_den[v] = sum(ARRAYS.lap_p_err[v,:, :].^2)
             if tmp_den[v] != 0.0
                 beta = - dot(vec(ARRAYS.lap_p_err[v,:, :]), vec(ARRAYS.err[idx_interior])) / tmp_den[v]

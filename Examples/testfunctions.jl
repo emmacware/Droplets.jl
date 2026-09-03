@@ -34,10 +34,11 @@ function coag_runtime(randseed::Int,droplets::droplet_attributes,
 end
 
 
-function plot_dsd(bins,runsettings::run_settings{FT};color="black",label=false,legend=true) where FT<:AbstractFloat   
+function plot_dsd(bins,runsettings::run_settings{FT};color="black",label=false,legend=true) where FT<:AbstractFloat
     radius_bins_edges = runsettings.radius_bins_edges
     mids = 0.5*(radius_bins_edges[1:end-1] + radius_bins_edges[2:end])*1e6
-    plot1 = plot!(mids,bins,xaxis=:log,label= runsettings.output_steps',legend=legend,legendtitle="Time Steps (s)")
+    plotlabel = label == false ? runsettings.output_steps' : label
+    plot1 = plot!(mids,bins,xaxis=:log,color=color,label=plotlabel,legend=legend,legendtitle="Time Steps (s)")
     xlabel!("Radius (μm)")
     if runsettings.binning_method == number_density
         ylabel!("Number density (m^-3)")

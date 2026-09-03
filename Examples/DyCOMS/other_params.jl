@@ -5,7 +5,7 @@ using Droplets
 using OrdinaryDiffEq
 
 using Plots
-using StatsPlots
+# using StatsPlots
 # using ComponentArrays
 using JLD2
 using Interpolations

@@ -113,7 +113,7 @@ for n in 1:nsteps
     end
 end
 
-gif(anim, "cgrid_rising_bubble_corrected.gif", fps=20)
+gif(anim, "cgrid_rising_bubble.gif", fps=20)
 
 
 

@@ -1,16 +1,22 @@
 
 using Random
-using Combinatorics
 using Distributions
 using Plots
 using PyCall
-using Interpolations # for hydrodynamic kernel/terminal velocity
 using Droplets
 using CPUTime
 include("../testfunctions.jl")
 include("pysce.jl")
 
-# A comparison with PySDM and JSDM for box collision-coalescence
+
+try
+    pyimport("PySDM")
+catch err
+    println("PySDM is required to run this comparison script, pip install PySDM.")
+    rethrow(err)
+end
+
+# A comparison with PySDM and Droplets.jl for box collision-coalescence
 
 #-------------------------
 # Variable Initialization
@@ -25,7 +31,7 @@ n0 = Integer(2^23) # initial number density of droplets, 1/m^3
 R0 = Float64(30.531e-6) # m
 X0 = radius_to_volume(R0)#Float64(4*π/3*R0^3) # m^3
 Random.seed!(30)
-kernel = golovin #hydrodynamic,golovin -- for Julia version, edit PySDM kernel in Test Environment
+kernel = golovin #hydrodynamic,golovin -- for Julia version, edit PySDM kernel on line 58
 
 #-------------------------
 
@@ -76,7 +82,7 @@ asol = analytic_soln([0.001,1200,2400,3600],radius_bins_edges,n0,X0,ΔV, 1500)
 plot_dsd(asol*kg_to_g,runsettings,color="red",label=["Analytic Soln" false false false],legend=true)
 
 #julia
-drops = droplet_attributes(ξ_start,X_start)
+drops = droplet_attributes{FT}(ξ_start,X_start)
 bins,times = coag_runtime(1,drops,coagsettings,runsettings)
 plot2 = plot_dsd(bins*kg_to_g,runsettings,color="black",label=["Droplets.jl" false false false],legend=true)
 
@@ -114,7 +120,7 @@ for step = 0:1200:3600
         lc=:dodgerblue,xaxis=:log, label= label) #"t = $step s")   
 end
 end
-print("PySDM time: ", pytime)
+println("PySDM time: ", pytime)
 display(plot2)
 
 #-------------------------
@@ -126,6 +132,7 @@ annotate!(1100, 1, text("t= 3600s", 8, :left))
 title!("Comparison of Droplets.jl and PySDM")
 xlabel!("Particle radius [µm]")
 ylabel!("Mass Density [g/m^3/(unit dr/r)]")
+savefig("box_collision_coalescence_droplets_pysdm.png")
 
 
 
