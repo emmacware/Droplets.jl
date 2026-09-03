@@ -18,6 +18,10 @@ makedocs(
         "Home" => "index.md",
         "Coalescence" => Coalescence,
         "Condensation" => Condensation,
+        "Turbulence" => "turbulence.md",
+        "Droplet Attributes" => "droplets.md",
+        "Settings" => "settings.md",
+        "Constants" => "constants.md",
     ],
     clean = true,
 )

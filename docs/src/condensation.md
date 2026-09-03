@@ -3,6 +3,6 @@
 ```@autodocs
 Modules = [Droplets]
 Public = true
-Pages = ["src/SDFunc/condensation.jl"]
+Pages = ["src/SDfunc/Condensation/condensation.jl"]
 
 ```
