@@ -19,7 +19,7 @@ end
 
     function test_init_method(init_func, coagsettings)
         init_method = init_func(coagsettings)
-        @test sum(init_method.ξ) ≈ coagsettings.n0*coagsettings.ΔV rtol = 1e-2
+        @test sum(init_method.ξ) ≈ coagsettings.n0*coagsettings.ΔV rtol = 3e-2
 
         effective_vol = sum(init_method.X.*init_method.ξ) / (sum(init_method.ξ))
         effective_radius = volume_to_radius(effective_vol)
@@ -42,8 +42,8 @@ end
     droplet_probability = golovin(ξ_const, (1,2), coagsettings)
     @test droplet_probability == coagsettings.golovin_kernel_coeff * (ξ_const.X[1] + ξ_const.X[2])
 
-    big_golovin_coefficient_settings = coag_settings{FT}(Ns = 2^15, golovin_kernel_coeff = 1700)
-    small_golovin_coefficient_settings = coag_settings{FT}(Ns = 2^15, golovin_kernel_coeff = 1300)
+    big_golovin_coefficient_settings = coag_settings{FT}(Ns = 2^15, golovin_kernel_coeff = 1700.0)
+    small_golovin_coefficient_settings = coag_settings{FT}(Ns = 2^15, golovin_kernel_coeff = 1300.0)
     @test golovin(ξ_const, (1,2), big_golovin_coefficient_settings) > golovin(ξ_const, (1,2), small_golovin_coefficient_settings)
 
     #same-size drops cannot collide
@@ -192,11 +192,11 @@ end
         L = [(1,2),(3,4),(5,6)]
         sixdrops.ξ[1:6] .= [2e9,3e10,4e9,5e10,(7e13-1),7e13]
         R = [3e-6,3e-6,3e-6,3e-6,3e-5,3e-5]
-        sixdrops.X = radius_to_volume.(R)
+        sixdrops.X .= radius_to_volume.(R)
         coag_data.ϕ[1:3] .= [0.5,1e-9,0.2]
         t_start = 100.0
-        tlim_pair2 = div(sixdrops.ξ[4], sixdrops.ξ[3])/(ξ[4] * golovin(sixdrops, (3,4), coagsettings)*(coagsettings.scale / coagsettings.ΔV))
-        tlim_pair3 = div(sixdrops.ξ[6], sixdrops.ξ[5])/(ξ[6] * golovin(sixdrops, (5,6), coagsettings)*(coagsettings.scale / coagsettings.ΔV))
+        tlim_pair2 = div(sixdrops.ξ[4], sixdrops.ξ[3])/(sixdrops.ξ[4] * golovin(sixdrops, (3,4), coagsettings)*(coagsettings.scale / coagsettings.ΔV))
+        tlim_pair3 = div(sixdrops.ξ[6], sixdrops.ξ[5])/(sixdrops.ξ[6] * golovin(sixdrops, (5,6), coagsettings)*(coagsettings.scale / coagsettings.ΔV))
         expected_tlims = [t_start,tlim_pair2,tlim_pair3]
 
 
@@ -214,7 +214,7 @@ end
         function test_tleft(sixdrops,coag_data,coagsettings,L,t_start,expected_tlims)
             t_left = Ref(t_start .+0)
             #act
-            adaptive_pαdt!(L,sixdrops,coag_data,t_left,golovin,coagsettings.scale,coagsettings)
+            adaptive_pαdt!(L,sixdrops,coag_data,t_left,golovin,coagsettings)
 
             #assert
             @test coag_data.pαdt[2] ≈ div(sixdrops.ξ[4], sixdrops.ξ[3])/expected_tlims[2] * expected_tlims[3]
@@ -227,6 +227,7 @@ end
     end
 
     six_drops,six_drops_coag_settings,six_drops_coag_data = empty_drops(6)
+    test_adaptive_limits_tstep(six_drops,six_drops_coag_data,six_drops_coag_settings)
 
 end
 

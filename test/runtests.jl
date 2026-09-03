@@ -5,7 +5,7 @@ using Test
     FT = Float64
     Ns = 2
     scale = Ns * (Ns - 1) / 2 / (Ns / 2)
-    coagsettings = coag_settings{FT}(Ns=Ns,scale=scale,Δt=1)
+    coagsettings = coag_settings{FT}(Ns=Ns,scale=scale,Δt=1.0)
 
     ξ = [Int(2),Int(3)]
     R = [FT(1.0),FT(2.0)]

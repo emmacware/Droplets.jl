@@ -49,7 +49,7 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         GCz = fill(0.3, nz + 1)
         tmp = make1d_tmp(nz); tmp.GCz_step .= GCz
         ϕ0  = sum(ϕ)
-        donor_cell_pass!(ϕ, tmp, vbc=Periodic())
+        donor_cell_pass!(ϕ, tmp, Periodic())
         @test sum(ϕ) ≈ ϕ0 atol=1e-12
     end
 
@@ -60,7 +60,7 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         GCz = fill(0.3, nz + 1); GCz[1] = 0.0; GCz[end] = 0.0
         tmp = make1d_tmp(nz); tmp.GCz_step .= GCz
         ϕ0  = sum(ϕ)
-        donor_cell_pass!(ϕ, tmp, vbc=NoFlux(), topcellreservoir=false)
+        donor_cell_pass!(ϕ, tmp, NoFlux(), topcellreservoir=false)
         @test sum(ϕ) ≈ ϕ0 atol=1e-12
     end
 
@@ -71,11 +71,11 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         ϕ_conservative = rand(nz)
         tmp1 = make1d_tmp(nz); tmp1.GCz_step .= GCz_internal
         ϕ_conservative_copy = copy(ϕ_conservative)
-        donor_cell_pass!(ϕ_conservative_copy, tmp1, vbc=NoFlux(), topcellreservoir=false)
+        donor_cell_pass!(ϕ_conservative_copy, tmp1, NoFlux(), topcellreservoir=false)
 
         ϕ_reservoir = copy(ϕ_conservative)
         tmp2 = make1d_tmp(nz); tmp2.GCz_step .= GCz_internal
-        donor_cell_pass!(ϕ_reservoir, tmp2, vbc=NoFlux(), topcellreservoir=true)
+        donor_cell_pass!(ϕ_reservoir, tmp2, NoFlux(), topcellreservoir=true)
 
         # Conservative version conserves; reservoir version does not (top cell frozen,
         # but mass still leaves other cells toward it)
@@ -88,7 +88,7 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         ϕ  = fill(3.0, nz)
         GCz = fill(0.4, nz + 1)
         tmp = make1d_tmp(nz); tmp.GCz_step .= GCz
-        donor_cell_pass!(ϕ, tmp, vbc=Periodic())
+        donor_cell_pass!(ϕ, tmp, Periodic())
         @test all(ϕ .≈ 3.0)
     end
 
@@ -98,7 +98,7 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         ϕ0 = copy(ϕ)
         GCz = fill(0.4, nz + 1)
         tmp = make1d_tmp(nz); tmp.GCz_step .= GCz
-        donor_cell_pass!(ϕ, tmp, vbc=Periodic())
+        donor_cell_pass!(ϕ, tmp, Periodic())
         # Cell 3 should lose mass; cell 4 (upward) should gain
         @test ϕ[3] < ϕ0[3]
         @test ϕ[4] > ϕ0[4]
@@ -110,7 +110,7 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
         ϕ0 = copy(ϕ)
         GCz = fill(-0.4, nz + 1)
         tmp = make1d_tmp(nz); tmp.GCz_step .= GCz
-        donor_cell_pass!(ϕ, tmp, vbc=Periodic())
+        donor_cell_pass!(ϕ, tmp, Periodic())
         @test ϕ[5] < ϕ0[5]
         @test ϕ[4] > ϕ0[4]
     end
@@ -122,11 +122,11 @@ make1d_tmp(nz) = mpdata_tmp_1d(zeros(nz), zeros(nz + 1))
 
         ϕ_std = copy(ϕ)
         tmp1 = make1d_tmp(nz); tmp1.GCz_step .= GCz
-        donor_cell_pass!(ϕ_std, tmp1, vbc=Periodic(), infinite_gauge=false)
+        donor_cell_pass!(ϕ_std, tmp1, Periodic(), infinite_gauge=false)
 
         ϕ_ig  = copy(ϕ)
         tmp2 = make1d_tmp(nz); tmp2.GCz_step .= GCz
-        donor_cell_pass!(ϕ_ig, tmp2, vbc=Periodic(), infinite_gauge=true)
+        donor_cell_pass!(ϕ_ig, tmp2, Periodic(), infinite_gauge=true)
 
         # With infinite_gauge each face contributes ±GC regardless of ϕ;
         # the results differ from the standard upwind case

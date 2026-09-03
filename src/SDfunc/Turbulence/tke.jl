@@ -277,37 +277,12 @@ function my25_stability_functions(l::Vector{FT},K_h::Vector{FT}, K_m::Vector{FT}
 end
 
 
-# function calculate_Kh_Km!(::MellorYamada, K_h::Vector{FT}, K_m::Vector{FT},K_e::Vector{FT},l::Vector{FT},N2,S2,SM,SH,GN,GH, grid, tke, constants) where FT<:AbstractFloat
-#     for k in 1:nz
-#         my25_stability_functions(GH,GM,SM,SH,k,tke,grid,constants)
-#     end
-
-# end
 
 function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants, turbdata::turbulence_data)
     nz = grid.nz
     dz = grid.dz
 
-
-    #do this again?
-    # for k in 1:nz
-    #     my25_stability_functions()
-    # end
-
-    # CURRENT (buggy denominator): diss = ε [m²/s³], so dt*diss has units m²/s², not dimensionless.
-    # for k in 1:nz
-    #     de   = (SM[k] * GM[k] + SH[k] * GH[k]) * (2 * grid.states.e[k])^(3/2) / l[k]
-    #     diss = tke.my_diss * (2 * grid.states.e[k])^(3/2) / l[k]
-    #     grid.states.e[k] = (grid.states.e[k] + dt * (de)) / (1 + dt * diss)
-    # end
-
-    # grid.states.e .= min.(grid.states.e, 0.4)
-
-    # FIXED (correct semi-implicit): diss_rate = ε/e = 2q/(B1*l) [s⁻¹], so dt*diss_rate is dimensionless.
-    # Derivation: linearize ε^(n+1) ≈ (ε^n/e^n)*e^(n+1), solve → e = (e + dt*prod)/(1 + dt*diss_rate).
-    # Reference: MY82 dissipation formula ε=q³/(B1*l); semi-implicit form in Durran (1999) §2.4.
     for k in 1:nz
-        # q = sqrt(2 * max(grid.states.e[k], tke.e_min))
         q         = sqrt(2 * grid.states.e[k])
         turbdata.shear_production[k]    = SM[k] * GM[k] * q^3 / l[k]
         turbdata.buoyancy_production[k] = SH[k] * GH[k] * q^3 / l[k]
@@ -318,7 +293,6 @@ function tke_update!(l,SM,SH,GM,GH,grid, tke,dt, constants, turbdata::turbulence
         grid.states.eps[k] = diss_rate * e_new   # ε = (ε/e)*e [m²/s³]
         grid.states.e[k] = e_new
     end
-    # grid.states.e .= max.(grid.states.e, tke.e_min)
 
     return nothing
 end
@@ -339,9 +313,7 @@ function bott1997term(grid, k, constants)
     θl_k  = θl_arr[k]
 
     if k == 1
-        # Second-order one-sided (3-point, forward) difference, actually centered at
-        # z_1 itself -- see S2_flow_deformation for why the plain (φ[2]-φ[1])/dz form
-        # is really centered at the face z_1+dz/2, not at the cell-1 location.
+        # Second-order one-sided (3-point, forward) difference, actually centered at z_1
         dθldz_k = (-3*sm3(i->θl_arr[i],1) + 4*sm3(i->θl_arr[i],2) - sm3(i->θl_arr[i],3)) / (2*dz)
         dqtdz_k = (-3*sm3(qt,1) + 4*sm3(qt,2) - sm3(qt,3)) / (2*dz)
     elseif k == nz
@@ -374,7 +346,6 @@ end
 function saturation_specific_humidity(θ, P,q_vap, constants)
     T = T_from_theta(θ, P,q_vap, constants)
     es = esat(T) # saturation vapor pressure in Pa
-    # qsat = constants.ϵ * es / (P - es) # saturation specific humidity
     qsat = constants.ϵ*es/(P - (1-constants.ϵ)*es)
     return qsat
 end

@@ -228,35 +228,35 @@ Split the superdroplet with the highest multiplicity into two equal parts, as pr
 """
 
 
-# function split_highest_multiplicity!(droplets::droplet_attributes{FT}) where FT<:AbstractFloat
-#     if maximum(droplets.ξ) > 1
-#         while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
-#             argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
-#             droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
-#             droplets.X[argmin_i] = droplets.X[argmax_i]
+function split_highest_multiplicity!(droplets::simple_droplet_attributes{FT}) where FT<:AbstractFloat
+    if maximum(droplets.ξ) > 1
+        while (minimum(droplets.ξ) <= 0 && maximum(droplets.ξ) > 1)
+            argmin_i, argmax_i = argmin(droplets.ξ), argmax(droplets.ξ)
+            droplets.ξ[argmin_i] = floor(droplets.ξ[argmax_i]/2)
+            droplets.X[argmin_i] = droplets.X[argmax_i]
 
-#             droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
-#         end
-#     elseif (maximum(droplets.ξ) <= 1)
+            droplets.ξ[argmax_i] -= floor(droplets.ξ[argmax_i]/2)
+        end
+    elseif (maximum(droplets.ξ) <= 1)
 
-#         println("Highest superdroplet cannot be split")
-#         #right now, break the model until this situation gets handled
-#         if (maximum(droplets.ξ) < 1)
-#             error("Highest and Lowest Superdroplet have ξ==0")
-#         end
+        println("Highest superdroplet cannot be split")
+        #right now, break the model until this situation gets handled
+        if (maximum(droplets.ξ) < 1)
+            error("Highest and Lowest Superdroplet have ξ==0")
+        end
 
-#         #Later:remove superdroplet.. how to handle between cells?
+        #Later:remove superdroplet.. how to handle between cells?
 
-#         # # Cannot split highest multiplicity superdroplet, have to remove superdroplet from system
-#         # println("Superdroplet ", argmin(ξ), " has multiplicity of ", ξ[argmin(ξ)], ", removing from system")
-#         # deleteat!(R,argmin(ξ))
-#         # # deleteat!(M,argmin(ξ))
-#         # deleteat!(X,argmin(ξ))
-#         # deleteat!(ξ,argmin(ξ))
-#         # # Ns=Ns-1
-#     end
-#     return nothing
-# end
+        # # Cannot split highest multiplicity superdroplet, have to remove superdroplet from system
+        # println("Superdroplet ", argmin(ξ), " has multiplicity of ", ξ[argmin(ξ)], ", removing from system")
+        # deleteat!(R,argmin(ξ))
+        # # deleteat!(M,argmin(ξ))
+        # deleteat!(X,argmin(ξ))
+        # deleteat!(ξ,argmin(ξ))
+        # # Ns=Ns-1
+    end
+    return nothing
+end
 
 
 
@@ -310,7 +310,7 @@ end
 
 @inline function step_Ps!(i::Int, (j,k)::Tuple{Int,Int}, droplets::droplet_attributes_1d,coag_data::coagulation_run_spatial,kernel::Function,coagsettings::coag_settings{FT}) where FT<:AbstractFloat
     cell = droplets.cell_id[j]
-    scale = coag_data.scale[cell]  # precomputed once per cell in coalescence_timestep! -- identical for every pair in this cell
+    scale = coag_data.scale[cell]
     pαdt = max(droplets.ξ[j], droplets.ξ[k]) * kernel(droplets,(j,k), coagsettings) * scale * coagsettings.Δt / coagsettings.ΔV
     ϕ = rand()
     coag_data.collision_rate_pair[i] = zero(FT)

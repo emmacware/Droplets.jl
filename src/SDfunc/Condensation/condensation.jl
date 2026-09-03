@@ -110,7 +110,7 @@ function drkohler(R, M, m, T, Senv,constants, timestep)
     return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
-function drkappakohler(R,dry_r3,kappa,T,Senv,constants;rad_term=0.0)
+function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
     fk = FK(T, constants)
