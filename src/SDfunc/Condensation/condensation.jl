@@ -448,58 +448,58 @@ end
 #     return Fk/(Fa*Fq)
 # end
 
-K(T) = (2.38+0.00703(T - constants.T0))*1e-2
-const β_diff = 0.04
-β(T) = β_diff * exp(-(T-constants.T0)/85)
-const α_diff = 0.7
-D(T,p) = 2.11e−5 * (T/constants.T0)*1.94*(constants.P0/p)
+# K(T) = (2.38+0.00703(T - constants.T0))*1e-2
+# const β_diff = 0.04
+# β(T) = β_diff * exp(-(T-constants.T0)/85)
+# const α_diff = 0.7
+# D(T,p) = 2.11e−5 * (T/constants.T0)*1.94*(constants.P0/p)
 
-function F_α(R,T,ρ_air,Re,K_th,constants)
-    l_q = (2π/(constants.Rd*T))^0.5*K(T)*f_q(Re,ρ_air,T)/(ρ_air*constants.Cp_air*2*α_diff*(2-α_diff)^(-1))
-    # l_q = K_th * f_q(Re,ρ_air,T) / (ρ_air*constants.Cp_air*1/4 * α_diff* (8*(constants.Rd*T/pi))^0.5)
-    return R/(R+ l_q)
-end
+# function F_α(R,T,ρ_air,Re,K_th,constants)
+#     l_q = (2π/(constants.Rd*T))^0.5*K(T)*f_q(Re,ρ_air,T)/(ρ_air*constants.Cp_air*2*α_diff*(2-α_diff)^(-1))
+#     # l_q = K_th * f_q(Re,ρ_air,T) / (ρ_air*constants.Cp_air*1/4 * α_diff* (8*(constants.Rd*T/pi))^0.5)
+#     return R/(R+ l_q)
+# end
 
-function F_β(R,T,ρ_air,P,Dv,Re,constants)
-    l_m =  (2π/(constants.Rv*T))^0.5 * Dv * f_m(Re,ρ_air,T,P)/(2*β(T)*(2-β(T))^(-1))
-    return R/(R + l_m)
-end
+# function F_β(R,T,ρ_air,P,Dv,Re,constants)
+#     l_m =  (2π/(constants.Rv*T))^0.5 * Dv * f_m(Re,ρ_air,T,P)/(2*β(T)*(2-β(T))^(-1))
+#     return R/(R + l_m)
+# end
 
-function fvmol(Re,ScPr,constants)
-    re_half_scpr_third = Re^0.5 * ScPr^(1/3)
-    if re_half_scpr_third < 1.4
-        # fvmol = 1+0.108*(re_half_scpr_third^2)
-        fvmol = 1+0.14*(re_half_scpr_third^2)
-    else
-        # fvmol = 0.78 + 0.308*re_half_scpr_third
-        fvmol = 0.86 + 0.28*re_half_scpr_third
-    end
-    return fvmol
-end
+# function fvmol(Re,ScPr,constants)
+#     re_half_scpr_third = Re^0.5 * ScPr^(1/3)
+#     if re_half_scpr_third < 1.4
+#         # fvmol = 1+0.108*(re_half_scpr_third^2)
+#         fvmol = 1+0.14*(re_half_scpr_third^2)
+#     else
+#         # fvmol = 0.78 + 0.308*re_half_scpr_third
+#         fvmol = 0.86 + 0.28*re_half_scpr_third
+#     end
+#     return fvmol
+# end
 
 
-function Sc(ρ_air,T,P,constants)
-    return η_air(T,ρ_air,constants)/(ρ_air*D(T,P))
-end
+# function Sc(ρ_air,T,P,constants)
+#     return η_air(T,ρ_air,constants)/(ρ_air*D(T,P))
+# end
 
-function Pr(ρ_air,T,constants)
-    return η_air(T,ρ_air,constants)*constants.Cp_air/K(T)
-end
-f_m(Re_,ρ_air,T,P,constants) = fvmol(Re_,Sc(ρ_air,T,P,constants))
-f_q(Re_,ρ_air,T,constants) = fvmol(Re_,Pr(ρ_air,T,constants))
+# function Pr(ρ_air,T,constants)
+#     return η_air(T,ρ_air,constants)*constants.Cp_air/K(T)
+# end
+# f_m(Re_,ρ_air,T,P,constants) = fvmol(Re_,Sc(ρ_air,T,P,constants))
+# f_q(Re_,ρ_air,T,constants) = fvmol(Re_,Pr(ρ_air,T,constants))
 
-function Reynoldsnumber(R,ρ_air,T,constants)
-    return 2*R*ρ_air*terminal_v(R)/η_air(T,ρ_air,constants)
-end
+# function Reynoldsnumber(R,ρ_air,T,constants)
+#     return 2*R*ρ_air*terminal_v(R)/η_air(T,ρ_air,constants)
+# end
 
-function η_air(T,ρ_air,constants) #kinematic viscosity of air
-    μ = constants.μ*(T/296.16)^1.5 * (T + 120)/(T+296.16) #Hall and Pruppracher 1976 term index
-    return μ
-end
+# function η_air(T,ρ_air,constants) #kinematic viscosity of air
+#     μ = constants.μ*(T/296.16)^1.5 * (T + 120)/(T+296.16) #Hall and Pruppracher 1976 term index
+#     return μ
+# end
 
-function C_drag(Re_)
-    return 24*(1 + 0.15*Re_^0.687)/Re_ + 0.42/(1 + 42500*Re_^(-1.16))
-end
+# function C_drag(Re_)
+#     return 24*(1 + 0.15*Re_^0.687)/Re_ + 0.42/(1 + 42500*Re_^(-1.16))
+# end
 
 
 # function v_term(radius_m)
