@@ -39,7 +39,6 @@ Arguments
 - `settings`: Coagulation settings.
 
 """
-
 function init_logarithmic(settings::coag_settings{FT})where FT<:AbstractFloat
     Ns = settings.Ns
     ΔV = settings.ΔV
@@ -152,7 +151,6 @@ Arguments
 - `settings`: Coagulation settings.
 
 """
-
 function init_uniform_sd(settings::coag_settings{FT})where FT<:AbstractFloat
     Ns = settings.Ns
     ΔV = settings.ΔV
@@ -214,7 +212,6 @@ Arguments
 - `settings`: Coagulation settings.
 
 """
-
 function init_monodisperse(settings::coag_settings{FT})where FT<:AbstractFloat
     Ns = settings.Ns
     ΔV = settings.ΔV

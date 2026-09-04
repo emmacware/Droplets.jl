@@ -19,6 +19,7 @@ makedocs(
         "Coalescence" => Coalescence,
         "Condensation" => Condensation,
         "Turbulence" => "turbulence.md",
+        "Advection" => "advection.md",
         "Droplet Attributes" => "droplets.md",
         "Settings" => "settings.md",
         "Constants" => "constants.md",

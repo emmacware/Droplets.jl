@@ -109,7 +109,6 @@ Perform the SDM coalescence update for the superdroplets. Update the droplet att
 - `droplets::droplet_attributes`: The droplet attributes.
 - `coag_data::coagulation_run`: The coagulation data.
 """
-
 function test_pairs!(scheme::Serial,L::Vector{Tuple{Int,Int}},droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
     
     coag_data.lowest_zero[] = false
@@ -150,7 +149,6 @@ Perform the SDM coalescence update for the superdroplets when a coalesence event
 - `droplets::droplet_attributes`: The droplet attributes.
 - `coag_data::coagulation_run`: The coagulation data.
 """
-
 function sdm_update!(pair::Tuple{Int,Int},α::Int, droplets::droplet_attributes{FT},coag_data::coagulation_run) where FT<:AbstractFloat
 
     j,k = pair
@@ -226,7 +224,6 @@ Split the superdroplet with the highest multiplicity into two equal parts, as pr
 # Arguments
 - `droplets::droplet_attributes{FT}`: The droplet attributes.
 """
-
 
 function split_highest_multiplicity!(droplets::simple_droplet_attributes{FT}) where FT<:AbstractFloat
     if maximum(droplets.ξ) > 1
