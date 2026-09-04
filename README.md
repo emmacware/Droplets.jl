@@ -22,7 +22,7 @@ A Julia language implementation of the superdroplet method [(Shima et al., 2009)
 - 1D Kinematic Rainshaft with prescribed Thermodynamics (Shipway and Hill, 2012, PySDM)
 - A single-column DyCOMSII-RF02 stratocumulus example with MPDATA advection and a TKE-based turbulence closure (Wyant et al., 2007, Ackerman et al., 2009)
 
-![alt Text](src/Examples/sediment.gif)
+![alt Text](/Examples/sediment.gif)
 
 Droplets.jl is not currently in the julia directory, so to install and use as a package clone the git repo:
 
