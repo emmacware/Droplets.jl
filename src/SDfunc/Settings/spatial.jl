@@ -67,7 +67,14 @@ struct WeilDropletDiffusion <: DropletDiffusionScheme end        # weil_turbulen
 struct VisserDropletDiffusion <: DropletDiffusionScheme end      # turbulent_droplet_diffusion_visser! (Visser 1997 Markov-0)
 
 
+"""
 
+scm_settings
+
+    Settings for the SCM, including timestep, number of substeps for condensation/coagulation/radiation,
+    and which dynamics are on/off.
+
+"""
 struct scm_settings{FT<:AbstractFloat, Thr, Sch,
         Turb<:Dynamic, Cond<:Dynamic, REM_T<:Dynamic, Mot<:Dynamic,
         SpinupSat<:Dynamic, Rad<:Dynamic, Coag<:Dynamic, Sett<:Dynamic,

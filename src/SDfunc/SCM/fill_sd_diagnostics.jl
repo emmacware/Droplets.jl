@@ -1,6 +1,12 @@
 ##Functions for turning superdroplet attributes into diagnostic variables in SCM
 export sd_fill_diagnostics, scm_fill_diagnostic_output
 
+"""
+    sd_fill_diagnostics(sd, scm_grid, spatial, diagnostic_settings)
+    Fill the SCM diagnostics arrays with superdroplet data.
+    This function computes the liquid water content (LWC), effective radius, and number concentration for aerosol, cloud, and rain droplets in each grid cell based on the superdroplet attributes.
+"""
+
 function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid::scm_eulerian_arrays{FT}, spatial::spatial_settings_1d, diagnostic_settings::diagnostic_settings) where {FT<:AbstractFloat}
     diag = scm_grid.diagnostics
     aero_cut = diagnostic_settings.aerosol_cloud_cuttoff
@@ -50,6 +56,12 @@ function sd_fill_diagnostics(sd::droplet_attributes{FT}, scm_grid::scm_eulerian_
         rain_r2ξ  > 0 && (diag.rain_effective_radius[k]    = rain_r3ξ  / rain_r2ξ)
     end
 end
+
+"""
+    scm_fill_diagnostic_output(grid, coagdata, conddata, raddata, spatial, constants, t, turbdata)
+    Fill the SCM output arrays with diagnostic data at time step t.
+    This function copies the current state variables and diagnostics into the output arrays for later analysis.
+"""
 
 function scm_fill_diagnostic_output(grid::scm_eulerian_arrays{FT},coagdata::coagulation_run_spatial,conddata::condensation_data,raddata::Rad,spatial::spatial_settings_1d,constants::Constants{FT}, t::Int, turbdata::turbulence_data) where {FT,Rad}
     grid.output.P[:,t] .= grid.states.P

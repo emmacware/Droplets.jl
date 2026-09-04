@@ -2,13 +2,27 @@ export BoundaryCondition, Periodic, NoFlux, Reservoir, Extrapolated,
        limit, flux, mpdata_settings, mpdata_tmp, mpdata_fields, mpdata_mulitple_fields,
          mpdata_settings_1d, mpdata_tmp_1d, mpdata_fields_1d
 
-
+"""
+    BoundaryCondition
+    Abstract type for boundary conditions in MPDATA advection scheme.
+"""
 abstract type BoundaryCondition end
 struct Periodic <: BoundaryCondition end
 struct NoFlux <: BoundaryCondition end
 struct Reservoir <: BoundaryCondition end
 struct Extrapolated <: BoundaryCondition end
 
+"""
+mpdata_settings
+Struct for 2D MPDATA advection scheme Settings
+    - n_corr::Int: Number of corrective steps in MPDATA
+    - grid::Tuple{Int, Int}: Grid dimensions (Nx, Nz)
+    - horizontal_boundary_condition::Union{Periodic, NoFlux, Extrapolated}: Horizontal boundary condition type
+    - vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}: Vertical boundary condition type
+    - nonoscillatory::Bool: Flag for non-oscillatory option
+    - infinite_gauge::Bool: Flag for infinite gauge option
+
+"""
 struct mpdata_settings
     n_corr::Int
     grid::Tuple{Int, Int}
@@ -28,6 +42,18 @@ struct mpdata_settings
     end
 end
 
+"""
+mpdata_settings_1d{TVar<:ThermoVariable}
+Struct for 1D MPDATA advection scheme Settings
+    - n_corr::Int: Number of corrective steps in MPDATA
+    - grid::Int: Grid dimension (Nz)
+    - vertical_boundary_condition::Union{Periodic, NoFlux, Extrapolated}: Vertical boundary condition type
+    - nonoscillatory::Bool: Flag for non-oscillatory option
+    - infinite_gauge::Bool: Flag for infinite gauge option
+    - thermo_variable::TVar: Type of thermodynamic variable (θ, qv)
+    - topcell_boundary_condition::Union{Periodic, NoFlux, Reservoir}: Top cell boundary condition type (commented out)
+
+"""
 struct mpdata_settings_1d{TVar<:ThermoVariable}
     n_corr::Int
     grid::Int
@@ -48,6 +74,17 @@ struct mpdata_settings_1d{TVar<:ThermoVariable}
     end
 end
 
+"""
+mpdata_tmp
+mpdata_1d
+Struct for MPData Allocations 
+    - ϕ::Matrix{Float64}: Field variable
+    - GCx_step::Matrix{Float64}: Step size in x-direction
+    - GCy_step::Matrix{Float64}: Step size in y-direction
+    - GCx_tmp::Matrix{Float64}: Temporary storage for x-direction
+    - GCy_tmp::Matrix{Float64}: Temporary storage for y-direction
+    - minmax::NamedTuple: Named tuple containing local minimum and maximum values
+"""
 struct mpdata_tmp
     ϕ::Matrix{Float64}
     GCx_step::Matrix{Float64}

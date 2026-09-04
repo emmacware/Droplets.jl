@@ -40,6 +40,11 @@ function terminal_v(r::FT)::FT where FT<:AbstractFloat  # terminal velocity
     end
 end
 
+"""
+    terminal_v_X(X::FT) where FT<:AbstractFloat
+Compute the terminal velocity of a droplet of volume X
+
+"""
 function terminal_v_X(X::FT)::FT where FT<:AbstractFloat  # terminal velocity
     d_cm = 2 * volume_to_radius(X) * 100  # radius in meters → diameter in cm
     if d_cm < 0.0078
@@ -52,31 +57,15 @@ function terminal_v_X(X::FT)::FT where FT<:AbstractFloat  # terminal velocity
     end
 end
 
-
-# #not working correctly:
-# #collision efficiency function
-# function collision_efficiency(R1::FT,R2::FT)::FT where FT<:AbstractFloat
-#     #Parameterization from Berry 1967
-#     #https://doi.org/10.1175/1520-0469(1967)024<0688:CDGBC>2.0.CO;2
-#     r = max(R1,R2)*1e6
-#     rs = min(R1,R2)*1e6
-
-#     p = rs/r
-#     D = (-27)/(r^1.65)
-#     E = (-58)/(r^1.9)
-#     F = (15/r)^4 +1.13 
-#     G = (16.7/r)^8 +1 +0.004*r
-
-#     Y = 1+p+D/(p^F)+E/((1-p)^G)
-#     Y < 0 && (Y = 0)
-#     Y < 1 && (Y = 1)
-#     # Y > 1 && error("Collision efficiency cannot be greater than 1. Check the input radii.")
-
-#     return Y
-# end
-
+"""
+Compute the index into the Hall-Davis collision efficiency matrix for a droplet of radius R.
+"""
 @inline hall_davis_idx(R::FT) where FT<:AbstractFloat = R <= FT(100) ? Int(R) : 100 + Int((R - FT(100)) / FT(10))
 
+"""
+    collision_efficiency(R1::FT, R2::FT) where FT<:AbstractFloat
+Compute the collision efficiency between two droplets of radius R1 and R2 using the Hall-Davis parameterization.
+"""
 @inline function collision_efficiency(R1::FT, R2::FT)::FT where FT <: AbstractFloat
     r_max = FT(1100)
 
@@ -224,25 +213,25 @@ Taken from Golovin (1963), this kernel has an analytic solution for the Smulocho
     return settings.golovin_kernel_coeff *(droplets.X[j] + droplets.X[k])# Xsum
 end
 
-"""
-    long1974(droplets, (j, k), settings)
+# """
+#     long1974(droplets, (j, k), settings)
 
-Piecewise collision kernel from Eq. (11) in Long (1974),
-https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
+# Piecewise collision kernel from Eq. (11) in Long (1974),
+# https://doi.org/10.1175/1520-0469(1974)031<1040:STTDCE>2.0.CO;2
 
-    K(x, x') = sq_coeff * (x_lg² + x_sm²)   if r_lg < r_thresh
-    K(x, x') = lin_coeff * (x_lg + x_sm)     if r_lg ≥ r_thresh
+#     K(x, x') = sq_coeff * (x_lg² + x_sm²)   if r_lg < r_thresh
+#     K(x, x') = lin_coeff * (x_lg + x_sm)     if r_lg ≥ r_thresh
 
-where x is droplet volume and r_lg is the radius of the larger droplet.
-Default parameters: lin_coeff = 5.78e3 s⁻¹, sq_coeff = 9.44e15 m⁻³ s⁻¹, r_thresh = 5e-5 m.
-"""
-@inline function long1974(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
-    v_lg = max(droplets.X[j], droplets.X[k])
-    v_sm = min(droplets.X[j], droplets.X[k])
-    r_lg = volume_to_radius(v_lg)
-    if r_lg < settings.long_r_thresh
-        return settings.long_sq_coeff * (v_lg^2 + v_sm^2)
-    else
-        return settings.long_lin_coeff * (v_lg + v_sm)
-    end
-end
+# where x is droplet volume and r_lg is the radius of the larger droplet.
+# Default parameters: lin_coeff = 5.78e3 s⁻¹, sq_coeff = 9.44e15 m⁻³ s⁻¹, r_thresh = 5e-5 m.
+# """
+# @inline function long1974(droplets::droplet_attributes, (j,k)::Tuple{Int,Int}, settings::coag_settings{FT})::FT where FT<:AbstractFloat
+#     v_lg = max(droplets.X[j], droplets.X[k])
+#     v_sm = min(droplets.X[j], droplets.X[k])
+#     r_lg = volume_to_radius(v_lg)
+#     if r_lg < settings.long_r_thresh
+#         return settings.long_sq_coeff * (v_lg^2 + v_sm^2)
+#     else
+#         return settings.long_lin_coeff * (v_lg + v_sm)
+#     end
+# end

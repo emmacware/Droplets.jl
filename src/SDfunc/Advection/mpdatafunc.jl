@@ -1,11 +1,15 @@
 export mpdata_step!, flux_horizontal!, flux_vertical!, donor_cell_pass!, compute_antidiffusive_velocity!
 export antiosc!, flux_faces, beta_function, beta_function_1d, find_extrema!, mpdata_scm!
 
+"""Map index `i` into the valid range `[1,N]` per boundary condition `bc` (wrap, reflect, or clamp)."""
 limit(bc::Periodic,i,N) = i > N ? i - N : i < 1 ? i + N : i
 limit(bc::NoFlux,i,N) = i > N ? N + 1 - (i - N) : i < 1 ? i + (1 + abs(i)) : i
 limit(bc::Extrapolated,i,N) = clamp(i, 1, N)
+
+"""Upwind donor-cell flux of `ψL`/`ψR` across a face with Courant number `GC`."""
 flux(ψL, ψR, GC;infinite_gauge::Bool=false) = infinite_gauge ? GC : (max(GC, 0) * ψL + min(GC, 0) * ψR)
 
+"""Accumulate one donor-cell flux pass along the x-direction into `ϕ_tmp`, using Courant numbers `GCx`."""
 function flux_horizontal!(ϕ,ϕ_tmp,GCx;bc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
     nx, ny = size(ϕ)
     for i in 1:nx, j in 1:ny
@@ -15,6 +19,7 @@ function flux_horizontal!(ϕ,ϕ_tmp,GCx;bc::BoundaryCondition=Periodic(), infini
     end
 end
 
+"""Accumulate one donor-cell flux pass along the y-direction into `ϕ_tmp`, using Courant numbers `GCy`."""
 function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
     nx, ny = size(ϕ)
     for i in 1:nx, j in 1:ny   
@@ -26,6 +31,7 @@ function flux_vertical!(ϕ,ϕ_tmp,GCy; bc::BoundaryCondition=Periodic(), infinit
 end
 
 
+"""Advance 1D `ϕ` in place by one donor-cell flux pass along z, optionally dividing by `g_factor` and zeroing the top-cell flux when `topcellreservoir` is set."""
 function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
     tmp.ϕ .= 0
 
@@ -44,6 +50,7 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d, vbc::BoundaryCondition; infinit
     ϕ .+= tmp.ϕ
 end
 
+"""Advance 1D `ϕ` in place by one donor-cell flux pass along z under extrapolated (zero-gradient) boundaries."""
 function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gauge::Bool=false,topcellreservoir=false, g_factor=nothing)
     tmp.ϕ .= 0
 
@@ -70,6 +77,7 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp_1d,vbc::Extrapolated; infinite_gaug
     ϕ .+= tmp.ϕ
 end
 
+"""Advance 2D `ϕ` in place by one donor-cell flux pass in both x and y."""
 function donor_cell_pass!(ϕ,tmp::mpdata_tmp; hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic(), infinite_gauge::Bool=false)
     tmp.ϕ .= 0
     
@@ -80,6 +88,7 @@ function donor_cell_pass!(ϕ,tmp::mpdata_tmp; hbc::BoundaryCondition=Periodic(),
 end
 
 
+"""Compute the x-component MPDATA antidiffusive velocity correction into `tmp.GCx_tmp`."""
 function u_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20,hbc::BoundaryCondition=Periodic(),vbc::BoundaryCondition=Periodic())
     GCx_inside = tmp.GCx_step .+ 0
     GCy_inside = tmp.GCy_step .+ 0
@@ -113,6 +122,7 @@ function u_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20,hbc::BoundaryCondit
 
 end
 
+"""Compute the y-component MPDATA antidiffusive velocity correction into `tmp.GCy_tmp`."""
 function v_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryCondition=Periodic(),hbc::BoundaryCondition=Periodic())
     GCx_inside = tmp.GCx_step .+ 0
     GCy_inside = tmp.GCy_step .+ 0
@@ -145,6 +155,7 @@ function v_corrective!(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryCondi
     end
 end
 
+"""Compute the 1D (z) MPDATA antidiffusive velocity correction into `tmp.GCz_tmp`."""
 function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryCondition=Periodic())
     GCz_inside = tmp.GCz_step .+ 0
     nz = length(ϕ)
@@ -165,6 +176,7 @@ function corrective_vel_1d(ϕ,tmp,settings; f = 0.5,ϕ_eps=1e-20, vbc::BoundaryC
     end
 end
 
+"""Compute the 2D nonoscillatory flux limiters `(β_in, β_out)` at cell `(i,j)` that bound `ϕ` by its local extrema."""
 function beta_function(ϕ,tmp,i_idx,j_idx,GCxph,GCxmh,GCyph,GCymh,infinite_gauge;ϕ_eps=1e-20)
     im1,i,ip1 = i_idx
     jm1,j,jp1 = j_idx
@@ -218,6 +230,7 @@ end
 
 
 
+"""Rescale the 2D antidiffusive velocities in `tmp` (FCT limiter) so the corrected donor-cell fluxes stay nonoscillatory."""
 function antiosc!(ϕ,tmp,settings; hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic())
     nx, ny = size(ϕ)
     
@@ -286,6 +299,7 @@ function antiosc!(ϕ,tmp,settings; hbc::BoundaryCondition=Periodic(), vbc::Bound
     tmp.GCy_step .= tmp.GCy_tmp
 end
 
+"""Compute and store the 2D antidiffusive velocities in `tmp` for the MPDATA corrective pass."""
 function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp,settings; f = 0.5,hbc::BoundaryCondition = Periodic(), vbc::BoundaryCondition = Periodic())
 
     tmp.GCx_tmp .= 0
@@ -298,6 +312,7 @@ function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp,settings; f = 0.5,h
     tmp.GCy_step .= tmp.GCy_tmp
 end
 
+"""Compute and store the 1D (z) antidiffusive velocity in `tmp` for the MPDATA corrective pass."""
 function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp_1d,settings; f = 0.5,vbc::BoundaryCondition = Periodic())
 
     tmp.GCz_tmp .= 0
@@ -307,6 +322,7 @@ function compute_antidiffusive_velocity!(ϕ, tmp::mpdata_tmp_1d,settings; f = 0.
     tmp.GCz_step .= tmp.GCz_tmp
 end
 
+"""Store the local max/min of 2D `ϕ` over each cell's neighbors into `tmp.minmax`."""
 function find_extrema!(ϕ,tmp;hbc::BoundaryCondition=Periodic(), vbc::BoundaryCondition=Periodic())
     nx, ny = size(ϕ)
     for i in 1:nx, j in 1:ny
@@ -317,6 +333,7 @@ function find_extrema!(ϕ,tmp;hbc::BoundaryCondition=Periodic(), vbc::BoundaryCo
     end
 end
 
+"""Store the local max/min of 1D `ϕ` over each cell's z-neighbors into `tmp.minmax`."""
 function find_extrema!(ϕ::Vector, tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Periodic())
     nz = length(ϕ)
     for k in 1:nz
@@ -326,6 +343,7 @@ function find_extrema!(ϕ::Vector, tmp::mpdata_tmp_1d; vbc::BoundaryCondition=Pe
     end
 end
 
+"""Compute the 1D nonoscillatory flux limiters `(β_in, β_out)` at cell `k` that bound `ϕ` by its local extrema."""
 function beta_function_1d(ϕ, tmp::mpdata_tmp_1d, k, km1, kp1, GCzmh, GCzph, infinite_gauge; ϕ_eps=1e-20)
     ψ = ϕ[k]; ψL = ϕ[km1]; ψR = ϕ[kp1]
     max_phi = tmp.minmax.localmax[k]
@@ -344,6 +362,7 @@ function beta_function_1d(ϕ, tmp::mpdata_tmp_1d, k, km1, kp1, GCzmh, GCzph, inf
     return β_in, β_out
 end
 
+"""Rescale the 1D (z) antidiffusive velocity in `tmp` (FCT limiter) so the corrected donor-cell flux stays nonoscillatory."""
 function antiosc!(ϕ::Vector, tmp::mpdata_tmp_1d, settings; vbc::BoundaryCondition=Periodic())
     nz = length(ϕ)
     tmp.GCz_tmp .= 0
@@ -373,6 +392,7 @@ function antiosc!(ϕ::Vector, tmp::mpdata_tmp_1d, settings; vbc::BoundaryConditi
     tmp.GCz_step .= tmp.GCz_tmp
 end
 
+"""Advance 2D `ϕ_stage` in place by one full MPDATA step (donor-cell pass plus `n_corr-1` antidiffusive corrections) given Courant numbers `GCx`, `GCy`."""
 function mpdata_step!(ϕ_stage::Matrix{Float64}, GCx::Matrix{Float64}, GCy::Matrix{Float64}, tmp::mpdata_tmp,settings::mpdata_settings;f=0.5) #current 201.875 μs (0 allocations: 0 bytes)
     n_corr = settings.n_corr
     hbc::BoundaryCondition = settings.horizontal_boundary_condition
@@ -426,6 +446,7 @@ end
 #     @views 0.5 .* (v[:, 1:end-1] .+ v[:, 2:end])
 # end
 
+"""Advance 1D `ϕ_stage` in place by one full MPDATA step along z (donor-cell pass plus `n_corr-1` antidiffusive corrections) given Courant numbers `GCz`."""
 function mpdata_step!(ϕ_stage::Vector{Float64}, GCz::Vector{Float64}, tmp::mpdata_tmp_1d,settings::mpdata_settings_1d;f=0.5, g_factor=nothing)
     n_corr = settings.n_corr
     vbc::BoundaryCondition = settings.vertical_boundary_condition
@@ -451,6 +472,7 @@ end
 
 
 # Prescribed Thermo Advection
+"""MPDATA-advect only water vapor mixing ratio in `grid` (advection on, thermo feedback off)."""
 function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d, constants::Constants) where {FT<:AbstractFloat}
     GCz = grid.wind.w * Δt ./ grid.dz
     r_vap = mixing_ratio.(grid.states.qv)
@@ -460,16 +482,13 @@ function mpdata_scm!(::DynON, ::DynOFF, grid::scm_eulerian_arrays, Δt::FT, tmp:
     return
 end
 
+"""Advection is off, so `grid` is left unchanged."""
 function mpdata_scm!(::DynOFF,::Dynamic,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 end
-
-# Which pair of grid.states arrays MPDATA advects: (θ,qv) directly, or (θ_l,qt) --
-# in the latter case θ/qv are reconstructed after advection (see
-# reconstruct_after_advection! below), using the same ql-computed-from-stale-θ/qv
-# approximation forward_solve.jl's turbulence path already uses.
 advected_thermo_fields(::ThetaQvVar, grid) = grid.states.θ, grid.states.qv
 advected_thermo_fields(::ThetalQtVar, grid) = grid.states.θl_tmp, grid.states.qt_tmp
 
+"""Recompute `θ`/`qv` (or `θ_l`/`qt`, whichever wasn't the advected pair) in `grid.states` after MPDATA advection."""
 function reconstruct_after_advection!(::ThetaQvVar, grid, constants)
     nz = grid.nz
     compute_ql_at_cell!.(grid.states, 1:nz, constants)
@@ -483,6 +502,7 @@ function reconstruct_after_advection!(::ThetalQtVar, grid, constants)
     grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
 end
 
+"""MPDATA-advect `grid`'s thermodynamic and dynamic fields (θ/θ_l, qv/qt, e, u, v, ρ) and reconstruct dependent state (advection on, thermo feedback on)."""
 function mpdata_scm!(::DynON,::DynON,grid::scm_eulerian_arrays, Δt::FT, tmp::mpdata_tmp_1d, settings::mpdata_settings_1d,constants::Constants) where {FT<:AbstractFloat}
 
     GCz = grid.wind.w * Δt ./ grid.dz

@@ -1,27 +1,26 @@
-export S2_flow_deformation#, calculate_Ri, calculate_buoyancy_frequency,
+export S2_flow_deformation
 export calculate_buoyancy_frequency
 export implicit_diffuse!
-#moist_buoyancy_production,
-# calculate_Pr, find_bl_height, apply_counter_gradient!
-export tke_settings#, AbstractTurbulenceScheme, ProgTKE, MellorYamada, SmagorinskyLilly, KNMIturb
-# export AbstractMixingLengthFunction, Deardorff, SL, Nonlocal, Blackadar, KNMI
-export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_exact!, turbulent_droplet_diffusion_wellmixed!, turbulent_droplet_diffusion_visser!
-export dθldz, moist_buoyancy_frequency
+export tke_settings
+export turbulent_droplet_diffusion!, turbulent_droplet_diffusion_wellmixed!, turbulent_droplet_diffusion_visser!
+export dθldz
 export run_droplet_diffusion!
 
-# abstract type AbstractTurbulenceScheme end
-# struct ProgTKE <: AbstractTurbulenceScheme end
-# struct MellorYamada <: AbstractTurbulenceScheme end
-# struct SmagorinskyLilly <: AbstractTurbulenceScheme end
-# struct KNMIturb <: AbstractTurbulenceScheme end
 
-# abstract type AbstractMixingLengthFunction end
-# struct Deardorff <: AbstractMixingLengthFunction end
-# struct SL <: AbstractMixingLengthFunction end
-# struct Nonlocal <: AbstractMixingLengthFunction end
-# struct Blackadar <: AbstractMixingLengthFunction end
-# struct KNMI <: AbstractMixingLengthFunction end
+"""
+    tke_settings{FT}(; kwargs...)
 
+Configuration and tunable coefficients for the prognostic-TKE turbulence
+closure: surface forcing (`u_star`, `SHF`, `LHF`), geostrophic wind profiles
+(`geostrophic_u`, `geostrophic_v`), Mellor-Yamada/Galperin coefficients
+(`c_n`, `vk`, `my_diss`, `GH_lims`), mixing-length scheme coefficients for
+`bott_mixing_length!` (`bott_α`, `bott_β`) and `edmfx_mixing_length!`
+(`c_m`, `c_d`, `c_b`, `l_inf`), which mixing-length scheme and thermodynamic
+variable pair to dispatch on (`mixing_length_scheme`, `thermo_variable`), and
+knobs for the droplet-diffusion schemes in this file (`average_e_l_3pt`,
+`droplet_diffusion_length_dz`, `tau_max`) and for
+[`implicit_diffuse!`](@ref) (`density_weighted_diffusion`).
+"""
 struct tke_settings{FT<:AbstractFloat, GU, GV, Mix<:MixingLengthScheme, TVar<:ThermoVariable}
     e_min::FT
     u_star::FT
@@ -45,7 +44,7 @@ struct tke_settings{FT<:AbstractFloat, GU, GV, Mix<:MixingLengthScheme, TVar<:Th
     average_e_l_3pt::Bool  # droplet diffusion: average e (and l, when used) over [z-1,z,z+1] vs. cell z alone
     droplet_diffusion_length_dz::Bool  # droplet diffusion: use dz as the length scale instead of the diagnosed mixing length l
     density_weighted_diffusion::Bool  # mass-weight implicit_diffuse! (ρK face diffusivity, dt/(ρdz²) per-cell) instead of plain ∂/∂z(K∂ϕ/∂z)
-    tau_max::FT  # cap on turbulent_droplet_diffusion_wellmixed!'s OU decorrelation timescale tau=Ct*l*sqrt(Ce/e); tau→∞ as e→0 otherwise, letting residual w' coast un-damped once a droplet enters a near-zero-e layer (e.g. above the inversion)
+    tau_max::FT  # cap on turbulent_droplet_diffusion_wellmixed!'s OU decorrelation timescale
 end
 
 function tke_settings{FT}(;
@@ -81,16 +80,14 @@ function tke_settings{FT}(;
 end
 
 
+"""
+    S2_flow_deformation(grid, k, constants, tke)
+
+Squared vertical wind shear |dU/dz|² at level `k`, used as the shear-production
+term in the Mellor-Yamada stability functions. 
+"""
 function S2_flow_deformation(grid, k, constants, tke)
     if k == 1
-        # Neutral surface-layer log-law estimate, |dU/dz| = u*/(κz), rather than the
-        # resolved (u[2]-u[1])/dz-style finite difference: that only sees the mean
-        # gradient across the first full grid spacing (z=5m to z=15m for dz=10m) and
-        # can't resolve the much sharper log-layer shear between the wall and the first
-        # grid point, where the true gradient is largest. The surface momentum flux is
-        # imposed as a flux BC on the mean-wind diffusion (see diffuse_fields!), not
-        # seen by a resolved gradient here, so without this the model structurally
-        # can't see the shear that flux is actually producing.
         z1 = grid.centers_z[1]
         S2 = (tke.u_star / (tke.vk * z1))^2
         return S2
@@ -112,6 +109,14 @@ end
 #     return Ri
 # end
 
+"""
+    calculate_buoyancy_frequency(grid, k, constants; dry=false)
+
+Brunt-Väisälä (buoyancy) frequency squared, N², at level `k`. With
+`dry=true`, uses a centered difference of dry potential temperature `θ`;
+otherwise uses moist `θl_tmp` scaled by [`bott1997term`](@ref) (Bott
+1997's liquid-water correction to the moist static stability).
+"""
 function calculate_buoyancy_frequency(grid, k, constants; dry::Bool=false)
     g  = constants.gconst
 
@@ -125,89 +130,16 @@ function calculate_buoyancy_frequency(grid, k, constants; dry::Bool=false)
         return (g / θ[k]) * (θ[kp] - θ[km]) / dz_buo
     end
 
-    # θlv = θl*(1 + 0.61qv - ql) (the naive form this used to have) just applies the
-    # unsaturated θv=θ(1+0.61qv-ql) formula straight to θl. That's wrong whenever
-    # ql>0: θ and θl differ by θ ≈ θl*(1 + L*ql/(Cp*T)), and that term (coefficient
-    # ~L/(Cp*T) ≈ 8-9, not the ~-1 the naive form implies) dominates the ql
-    # dependence and has the opposite sign -- condensation heating makes moist air
-    # *more* buoyant per unit ql, not less. bott1997term already implements the
-    # correct saturated/unsaturated-blended version of this (it's what feeds GH in
-    # my25_stability_functions/bott_mixing_length!); reuse it here so
-    # edmfx_mixing_length!/deardorff_mixing_length! see the same buoyancy physics.
     return (g / grid.states.θl_tmp[k]) * bott1997term(grid, k, constants)
 end
 
-function moist_buoyancy_frequency(grid, k, constants)
-    g  = constants.gconst
-    nz = grid.nz
-    dz = grid.dz
-    kp = min(k + 1, nz)
-    km = max(k - 1, 1)
-    dz_buo = (k == 1 || k == nz) ? dz : 2.0 * dz
 
-    L  = constants.L
-    Cp = constants.Cp_air
-    Cp_vapor = constants.Cp_vapor
-    Cp_water = constants.Cp_water
-    Rd = constants.Rd
-    P0 = constants.P0
-    qv = grid.states.qv
-    ql = grid.states.ql_tmp
-    θ  = grid.states.θ
-    T = grid.states.T_tmp
-    P  = grid.states.P
+"""
+    dθldz(θl_t, grid, k, constants)
 
-    # ------------------------------------------------------------
-    # Total water (NO singular transform)
-    # ------------------------------------------------------------
-    qt  = qv[k] + ql[k]
-    qt_p = qv[kp] + ql[kp]
-    qt_m = qv[km] + ql[km]
-
-    # ------------------------------------------------------------
-    # Virtual temperature approximation (Cotton/DK consistent)
-    # ------------------------------------------------------------
-    Tv = T[k] * (1 + 0.61 * qv[k] - ql[k])
-
-    # ------------------------------------------------------------
-    # Virtual potential temperature
-    # ------------------------------------------------------------
-    θv = θ[k] * (1 + 0.61 * qv[k] - ql[k])
-
-    # ------------------------------------------------------------
-    # Moist adiabatic lapse rate correction (DK-style form)
-    # ------------------------------------------------------------
-    es = esat(T[k])
-    rsat = constants.ϵ * es / (P[k] - es)
-
-    # moist static stability correction term (cleaned form)
-    Γd = g / Cp
-    denom = 1 + (L * rsat) / (Rd * T[k])
-
-    Γm = Γd / denom
-
-    # ------------------------------------------------------------
-    # θv gradient (core DK structure)
-    # ------------------------------------------------------------
-    dθv_dz = (θv - θ[k] * (1 + 0.61 * qv[k] - ql[k])) / dz_buo
-
-    # fallback centered form (more consistent numerically)
-    dθv_dz = (θ[kp]*(1 + 0.61*qv[kp] - ql[kp]) -
-              θ[km]*(1 + 0.61*qv[km] - ql[km])) / dz_buo
-
-    # ------------------------------------------------------------
-    # Moisture gradient correction (Cotton-style)
-    # ------------------------------------------------------------
-    dqt_dz = (qt_p - qt_m) / dz_buo
-
-    # DK-style buoyancy frequency
-    N2 = (g / θv) * dθv_dz - (g / (1 + qt)) * dqt_dz
-
-    # lapse rate correction (optional DK enhancement)
-    N2 += Γm * (g / T[k])
-    return N2
-end
-
+Centered (one-sided at the boundaries) vertical gradient of liquid-water
+potential temperature `θl_t` at level `k`.
+"""
 function dθldz(θl_t, grid, k, constants)
     nz = grid.nz
     dz = grid.dz
@@ -224,6 +156,14 @@ end
 
 
 
+"""
+    implicit_diffuse!(ϕ, K_centers, dt, dz, nz, turbdata; sfc_flux=nothing, ρ=nothing)
+
+Advance the diffusion equation ∂ϕ/∂t = ∂/∂z(K ∂ϕ/∂z) (or the mass-weighted
+∂/∂z(ρK ∂ϕ/∂z) form when `ρ` is given) by one implicit (Crank-Nicolson)
+timestep in place, via the Thomas algorithm. Both boundaries are no-flux
+unless `sfc_flux` is given.
+"""
 function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     dt::FT, dz::FT, nz::Int,turbdata::turbulence_data;
     sfc_flux::Union{FT,Nothing} = nothing,
@@ -237,9 +177,8 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     turbdata.c .= 0
     turbdata.d .= 0
 
-    # Face diffusivities -- mass-weighted (ρK, face-averaged) when ρ is given, so the
-    # scheme solves the anelastic ∂/∂z(ρK ∂ϕ/∂z) transport rather than plain ∂/∂z(K ∂ϕ/∂z).
-    K_face = turbdata.K_faces#zeros(FT, nz + 1)
+    # Face diffusivities, mass-weighted (ρK, face-averaged) when ρ is given
+    K_face = turbdata.K_faces
 
     if ρ === nothing
         for k in 2:nz
@@ -253,8 +192,6 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     K_face[1] = 0 # (bottom NoFlux)
     K_face[nz+1] = 0 # (top NoFlux)
 
-    # Per-cell r = dt/(ρ_k dz²) under mass weighting (dividing the ρϕ equation through
-    # by the cell's own ρ to keep solving for ϕ), or the plain dt/dz² otherwise.
     r_cell = ρ === nothing ? fill(dt / dz^2, nz) : dt ./ (ρ .* dz^2)
 
     rhs = turbdata.rhs#zeros(FT, nz)   # right-hand side (copy of ϕ)
@@ -275,13 +212,11 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
         d[k] = ϕ[k] + r/2 * (Kp*(ϕ[k+1]-ϕ[k]) - Km*(ϕ[k]-ϕ[k-1]))
     end
 
-    # b[1] = 1; d[1] = ϕ[1]
-    # Tridiagonal coefficients for k=1 (first interior cell)
     r1 = r_cell[1]
     a[1] = 0               # no sub-diagonal for first cell
     b[1] = 1 + r1/2*(K_face[1]+K_face[2])
     c[1] = -r1/2 * K_face[2]
-    d[1] = ϕ[1] + r1/2 * (K_face[2]*(ϕ[2]-ϕ[1]))#- r1/2 * K_face[1]*(sfc_flux * dt / dz)
+    d[1] = ϕ[1] + r1/2 * (K_face[2]*(ϕ[2]-ϕ[1]))
     rnz = r_cell[nz]
     a[nz] = -rnz/2 * K_face[nz]
     b[nz] = 1 + rnz/2 * K_face[nz]
@@ -304,8 +239,6 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     bet = b[1]
 
     for k in 2:nz
-        # c_star[k] = c[k-1]/bet
-        
         bet = b[k] - a[k] * c_star[k-1]
         c_star[k] = c[k] / bet
         d_star[k] = (d[k] - a[k] * d_star[k-1]) / bet
@@ -323,41 +256,16 @@ function implicit_diffuse!(ϕ::Vector{FT}, K_centers::Vector{FT},
     return nothing
 end
 
-function apply_counter_gradient!(grid, tke::tke_settings{FT}, K_h::Vector{FT}, constants, dt::FT) where FT
-    (tke.SHF == 0 && tke.LHF == 0) && return
+"""
+    turbulent_droplet_diffusion!(::DynOFF, l, droplets, grid, tke, dt)
+    turbulent_droplet_diffusion!(::DynON, l, droplets, grid, tke, dt)
 
-    nz  = grid.nz
-    dz  = FT(grid.dz)
-    ρ   = grid.states.ρ
-    g   = FT(constants.gconst)
-
-    HF = tke.SHF / (ρ[1] * constants.Cp_air)        
-    LHF = tke.LHF / (ρ[1] * constants.L)                
-    H_v   = HF + FT(0.61) * grid.states.θ[1] * LHF  
-
-    H_v <= 0 && return
-
-    h_idx, h = find_bl_height(grid)
-    h <= dz  && return
-    
-    #buoyancy parameter Beta_g
-    Beta_g = g / grid.states.θ[1]
-
-    w_star = cbrt(g / grid.states.θ[1] * HF * h)
-
-    γ_θ  = tke.c_γ * H_kin / (w_star * h)
-    γ_qv = tke.c_γ * E_kin / (w_star * h)
-
-    # Tendency: ∂ϕ/∂t|_nl = -∂(K_h γ)/∂z
-    # Non-local flux K_h γ is zero at the surface (k=1 lower face) and at the BL top (h_idx upper face).
-    for k in 1:h_idx-1
-        K_up = k < h_idx-1 ? FT(0.5)*(K_h[k] + K_h[k+1]) : FT(0)
-        K_dn = k > 1       ? FT(0.5)*(K_h[k-1] + K_h[k]) : FT(0)
-        grid.states.θ[k]  -= dt * (K_up - K_dn) * γ_θ  / dz
-        grid.states.qv[k] -= dt * (K_up - K_dn) * γ_qv / dz
-    end
-end
-
+Stochastic sub-grid vertical transport of droplets via droplet specific `w_prime` (adapted from
+Abade & Grabowski 2018, restricted to depend on TKE alone, with the
+Gillespie (1996) two-normal weak-second-order integration scheme) Droplets at or above the
+diagnosed inversion (`grid.states.qv < 0.008`, rediagnosed every time step) have `w_prime` clamped to
+`≤ 0` to not coast in turbulence free zones
+"""
 function turbulent_droplet_diffusion!(::DynOFF,l,droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT) where FT
 end
@@ -425,15 +333,22 @@ function turbulent_droplet_diffusion!(::DynON,l,droplets::droplet_attributes_1d{
     return
 end
 
+"""
+    turbulent_droplet_diffusion_wellmixed!(::DynOFF, l, droplets, grid, tke, dt)
+    turbulent_droplet_diffusion_wellmixed!(::DynON, l, droplets, grid, tke, dt)
+
+Same Ornstein-Uhlenbeck droplet-transport parameterization as
+[`turbulent_droplet_diffusion!`](@ref) (`tau = Ct*l*sqrt(Ce/e)`, capped at
+`tke.tau_max`), but with an added well-mixed drift term
+`(2/3) ∂e/∂z` (per Bahlali, Henry & Carissimo 2020) that
+`turbulent_droplet_diffusion!` omits, so a uniform droplet distribution
+stays uniform under a spatially varying `e`.
+"""
 function turbulent_droplet_diffusion_wellmixed!(::DynOFF,l,droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT) where FT
 end
 function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attributes_1d{FT},
     grid, tke::tke_settings{FT}, dt::FT) where FT
-    # Same Grabowski & Abade (2018)-style OU parameterization as turbulent_droplet_diffusion!
-    # (tau = Ct*l*sqrt(Ce/e), sigma2 = (2/3)e, noise amplitude solved backward from
-    # sigma2), but with the well-mixed drift correction turbulent_droplet_diffusion! is
-    # missing added back in. Per Bahlali, M.L., Henry, C., Carissimo, B. (2020), 
     nz = grid.nz
     dz = grid.dz
     Ce = FT(0.63)
@@ -485,6 +400,14 @@ function turbulent_droplet_diffusion_wellmixed!(::DynON,l,droplets::droplet_attr
     return
 end
 
+"""
+    turbulent_droplet_diffusion_visser!(::DynOFF, droplets, grid, K_centers, dt)
+    turbulent_droplet_diffusion_visser!(::DynON, droplets, grid, K_centers, dt)
+
+Random-walk droplet transport directly from an eddy diffusivity profile
+`K_centers` (Visser 1997): each droplet is displaced by a deterministic
+drift `dK/dz * dt` plus Gaussian noise `sqrt(2*K_half*dt)`, 
+"""
 function turbulent_droplet_diffusion_visser!(::DynOFF, droplets::droplet_attributes_1d{FT},
     grid, K_centers::Vector{FT}, dt::FT) where FT
 end
@@ -541,9 +464,19 @@ function turbulent_droplet_diffusion_visser!(::DynON, droplets::droplet_attribut
     return
 end
 
-# Dispatches scmsettings.droplet_diffusion_scheme to the corresponding turbulent
-# droplet transport implementation above; onoff is scmsettings.turbulent_droplet_diffusion_on
-# (independent DynON/DynOFF master switch, forwarded to whichever scheme is picked).
+"""
+    run_droplet_diffusion!(scheme, onoff, l, droplets, grid, tke, dt, K_h, e_prev)
+
+Dispatch on `scmsettings.droplet_diffusion_scheme` to the corresponding
+turbulent droplet transport implementation in this file:
+`NoDropletDiffusion` → no-op,
+`OUDropletDiffusion` → [`turbulent_droplet_diffusion!`](@ref),
+`WellMixedDropletDiffusion` → [`turbulent_droplet_diffusion_wellmixed!`](@ref),
+`WeilDropletDiffusion` → `weil_turbulent_droplet_diffusion!`,
+`VisserDropletDiffusion` → [`turbulent_droplet_diffusion_visser!`](@ref).
+`onoff` is `scmsettings.turbulent_droplet_diffusion_on`, an independent
+`DynON`/`DynOFF` master switch forwarded to whichever scheme is picked.
+"""
 run_droplet_diffusion!(::NoDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) = nothing
 run_droplet_diffusion!(::OUDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
     turbulent_droplet_diffusion!(onoff, l, droplets, grid, tke, dt)
@@ -554,6 +487,15 @@ run_droplet_diffusion!(::WeilDropletDiffusion, onoff, l, droplets, grid, tke, dt
 run_droplet_diffusion!(::VisserDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) =
     turbulent_droplet_diffusion_visser!(onoff, droplets, grid, K_h, dt)
 
+"""
+    stochastic_jump_diffusion!(::DynON, grid, droplets, K_centers, dt, dz, nz)
+
+Discrete 1D Monte Carlo analogue of Eulerian K-diffusion: only cloud
+droplets (radius < 40 μm) individually jump to the cell above/below with
+probability proportional to the face diffusive flux `K_face*dt/dz²`
+(renormalized if the two probabilities would sum above 1), independent of
+each droplet's multiplicity `ξ`.
+"""
 function stochastic_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}, K_centers::Vector{FT}, dt::FT, dz::FT, nz::Int) where FT
     # discrete 1D Monte Carlo analogue of Eulerian K-diffusion
 
@@ -599,8 +541,15 @@ function stochastic_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d
     return nothing
 end
 
+"""
+    partmc_jump_diffusion!(::DynON, grid, droplets, K_centers, dt, dz, nz)
+
+partmc-inspired stochastic diffusion of cloud droplets (radius < 40
+μm) between adjacent cells. ... Differences due to weighting handling, 
+not sure if this should be used yet
+"""
 function partmc_jump_diffusion!(::DynON,grid,droplets::droplet_attributes_1d{FT}, K_centers::Vector{FT}, dt::FT, dz::FT, nz::Int) where FT
-    # Riemer/PartMC-style Monte Carlo diffusion 
+    # partmc stochastic diffusion
 
     K_face = zeros(FT, nz + 1)
     for k in 2:nz

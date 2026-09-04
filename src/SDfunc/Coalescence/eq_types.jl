@@ -50,6 +50,11 @@ struct coagulation_run_0D{FT<:AbstractFloat} <:coagulation_run{FT}
     end
 end
 
+"""
+    coagulation_run_spatial{FT<:AbstractFloat}
+
+    struct for allocation related to coalescence in a spatially resolved simulation.
+"""
 struct coagulation_run_spatial{FT<:AbstractFloat} <:coagulation_run{FT}
 
     # N_in_cell::Vector{Int}
@@ -99,9 +104,10 @@ largest superdroplet is split into two equal parts, as proposed by
 Dziekan and Pawlowska (ACP, 2017) https://doi.org/10.5194/acp-17-13509-2017
 
 # Arguments
-- `run::backend`: Threading over Linear Sampling option
-- `scheme::schemetype`: adaptive or none
-- `droplets::droplet_attributes`: The superdroplets.
+- `run::backend`: Serial or Parallel
+- `scheme::schemetype`: adaptive timestepping or none
+- `droplets::droplet_attributes`: The superdroplets. 
+if droplet_attributes_1d, coag_data must be coagulation_run_spatial
 
 """
 function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none, droplets::droplet_attributes,
@@ -139,53 +145,6 @@ function coalescence_timestep!(run::Union{Serial, Parallel},scheme::Adaptive,dro
 end 
 
 
-# #totally rework
-# function coalescence_timestep!(run::Union{Serial, Parallel},scheme::none,droplets::droplet_attributes_1d{FT},
-#     coag_data::coagulation_run_spatial,settings::coag_settings{FT}) where FT<:AbstractFloat
-    
-#     N_grids = length(coag_data.N_in_cell)
-#     Ns = settings.Ns
-#     shuffle!(coag_data.I)
-#     #sort by cell id
-#     sort!(coag_data.I, by = i -> droplets.cell_id[i])
-#     #if there are d
-#     coag_data.scale.= 0
-#     #initiale L:
-#     L = Vector{Tuple{Int,Int}}(undef, div(Ns, 2))
-
-#     for g in 1:N_grids
-#         #find the number of droplets in the grid
-#         grid_idx = findfirst(i -> droplets.cell_id[i] == g, coag_data.I)
-#         if grid_idx == nothing
-#             continue
-#         end
-#         grid_Ns = count(i -> droplets.cell_id[i] == g, coag_data.I)
-#         pair_idx_start = div(grid_idx, 2) + 1
-#         pair_idx_end = pair_idx_start + div(grid_Ns-1, 2) - 1
-        
-#         #find first empty pair in L:
-#         first_empty_pair_idx = findfirst(i -> L[i] == nothing, 1:length(L))
-#         #fill L with pairs of droplets in the grid
-#         for i in 0:div(grid_Ns-1, 2)-1
-#             L[first_empty_pair_idx + i] = (coag_data.I[grid_idx + 2*i - 1], coag_data.I[grid_idx + 2*i])
-#         end
-
-#         # fill scale for index grid_idx/2 to grid_idx/2 + grid_num//2 with the appropriate value
-#         coag_data.scale[first_empty_pair_idx:pair_idx_end] .= div(grid_Ns * (grid_Ns - 1) , 2) / div(grid_Ns , 2)
-
-#     end
-
-
-#     compute_pαdt!(L, droplets,coag_data,settings.kernel,settings) # check if this still works with the scale being a vector
-
-#     rand!(coag_data.ϕ)
-
-#     test_pairs!(run,L,droplets,coag_data)
-
-#     return nothing
-# end
-
-#totally rework
 
 function rebuild_coalescence_pairing!(droplets::droplet_attributes_1d, coag_data::coagulation_run_spatial)
     empty!(coag_data.pair_starts)

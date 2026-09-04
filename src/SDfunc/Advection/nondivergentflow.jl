@@ -6,6 +6,9 @@ function stream_function(xX, yY, grid, dx, dy, omega, xc, yc)
     return 0.5 * omega * ((x .- xc).^2 .+ (y .- yc).^2)
 end
 
+"""
+Create a stream function for a non-divergent flow field based on the given parameters.
+"""
 function make_stream_function(grid, dx, dy, omega, xc, yc)
     sf = (x, y) -> stream_function(x, y, grid, dx, dy, omega, xc, yc)
     return sf
@@ -25,6 +28,10 @@ function face_coords(grid, offset_x=0.0, offset_y=0.0)
     return xX, yY
 end
 
+"""
+Compute the non-divergent vector field in 2D based on the given stream function and grid parameters.
+Returns the u and v velocity components, as well as the CFL numbers in x and y directions.
+"""
 function nondivergent_vector_field_2d(dx,dy,grid, dt, sf)
     dxX, dyY = 1 ./ grid
 

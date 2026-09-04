@@ -6,15 +6,30 @@ export compute_ql_at_cell!,compute_ql_all_cells!,θl,θ_from_θl
 export mixing_ratio, specific_humidity
 export theta_from_T!, ρ_ideal_gas!, T_from_theta!
 export virtual_temp_coeff
+"""
+    calc_θ_dry(constants, θ, q_vap)
+
+    Calculate dry potential temperature θ_dry 
+"""
   function calc_θ_dry(constants,θ, q_vap)
       r_vap = mixing_ratio(q_vap)
       return θ * (1 + r_vap / constants.ϵ)^(constants.Rd / constants.Cp_air)
   end
+"""
+    calc_θ_moist(constants, θd, q_vap)
+
+    Calculate moist potential temperature θ_moist
+"""
   function calc_θ_moist(constants,θd, q_vap)
       r_vap = mixing_ratio(q_vap)
       return θd * (1 + r_vap / constants.ϵ)^(-constants.Rd / constants.Cp_air)
   end
 
+"""
+    calc_ρ_dry_from_ρ(ρ, q_vap)
+
+    Calculate dry air density from total density and water vapor specific humidity
+"""
 function calc_ρ_dry_from_ρ(ρ, q_vap)
     FT = eltype(ρ)
     r_vap::FT = q_vap / (1 - q_vap)
@@ -22,24 +37,44 @@ function calc_ρ_dry_from_ρ(ρ, q_vap)
 end
 
 
+"""
+    calc_P_dry_from_P(P, q_vap, constants)
+
+    Calculate dry air pressure from total pressure and water vapor specific humidity
+"""
 function calc_P_dry_from_P(P, q_vap, constants)
     FT = eltype(P)
     r_vap::FT = q_vap / (1 - q_vap)
     return P / (1 + r_vap / constants.ϵ)
 end
 
+"""
+    calc_ρ_from_ρ_dry(ρ_dry, q_vap)
+
+    Calculate total density from dry air density and water vapor specific humidity
+"""
 function calc_ρ_from_ρ_dry(ρ_dry, q_vap)
     FT = eltype(ρ_dry)
     r_vap::FT = q_vap / (1 - q_vap)
     return ρ_dry * (1 + r_vap)
 end
 
+"""
+    calc_P_from_P_dry(P_dry, q_vap, constants)
+
+    Calculate total pressure from dry air pressure and water vapor specific humidity
+"""
 function calc_P_from_P_dry(P_dry, q_vap, constants)
     FT = eltype(P_dry)
     r_vap::FT = q_vap / (1 - q_vap)
     return P_dry * (1 + r_vap / constants.ϵ)
 end
 
+"""
+    calc_T(constants, θ, ρ_dry, q_vap)
+
+    Calculate temperature from potential temperature, dry air density, and water vapor specific humidity
+"""
 function calc_T(constants,θ, ρ_dry, q_vap)
     FT = eltype(θ)
     θ_dry::FT = calc_θ_dry(constants,θ, q_vap)
@@ -53,19 +88,51 @@ end
 
 
 # virtual T
-# Virtual-temperature buoyancy coefficient Rv/Rd - 1 (0.61)
+"""
+    virtual_temp_coeff(constants)
+"""
 @inline virtual_temp_coeff(constants) = constants.Rv / constants.Rd - 1
+"""
+    T_virtual(T, q_vap, constants)
+
+    Calculate virtual temperature
+"""
 T_virtual(T,q_vap,constants) = T .* (1 .+ virtual_temp_coeff(constants) .* q_vap)
+"""
+    θ_virtual(θ, q_vap, constants)
+
+    Calculate virtual potential temperature
+"""
 θ_virtual(θ,q_vap,constants) = θ .* (1 .+ virtual_temp_coeff(constants) .* q_vap)
+"""
+    θ_from_θv(θv, q_vap, constants)
+
+    Calculate potential temperature from virtual potential temperature
+"""
 θ_from_θv(θv,q_vap,constants) = θv ./ (1 .+ virtual_temp_coeff(constants) .* q_vap)
 
+"""
+    ρ_calc_θ(P, θ, q_vap, constants)
+
+    Calculate density using potential temperature (prognostic)
+"""
 @inline ρ_calc_θ(P, θ, q_vap, constants) = ρ_ideal_gas(P,T_from_theta(θ,P,q_vap,constants),q_vap,constants)
+"""
+    ρ_calc_θ!(ρ, P, θ, q_vap, constants)
+
+    Calculate density using potential temperature (prognostic) and store in ρ
+"""
 ρ_calc_θ!(ρ, P, θ, q_vap, constants) =
     @. ρ = ρ_ideal_gas(P, T_from_theta(θ,P,q_vap,constants), q_vap, constants)
 
 
 
 
+"""
+    compute_ql_at_cell!(state, k, constants)
+    Compute the liquid water mixing ratio ql at a specific grid cell k from superdroplet data
+    droplets.I must be current and droplets.grid_range[k] must be valid for this to work correctly.
+"""
 function compute_ql_at_cell!(state, k, constants)
     r = state.droplets.grid_range[k]
     if isempty(r)
@@ -81,6 +148,10 @@ function compute_ql_at_cell!(state, k, constants)
 end
 
 # Single O(N) pass over droplets.cell_id instead of grid range (for multiple reasons)
+"""
+    compute_ql_all_cells!(state, constants)
+    Compute the liquid water mixing ratio ql for all grid cells from superdroplet data using cell_id
+"""
 function compute_ql_all_cells!(state, constants)
     ql = state.ql_tmp
     fill!(ql, zero(eltype(ql)))
@@ -96,7 +167,13 @@ function compute_ql_all_cells!(state, constants)
 end
 
 
+"""
+    mixing_ratio(q_vap)
+"""
 @inline mixing_ratio(q_vap) = q_vap / (1 - q_vap)
+"""
+    specific_humidity(r)
+"""
 @inline specific_humidity(r) = r / (1 + r)
 
 # -------------------------------------------------------
@@ -105,39 +182,76 @@ end
 #   true  (PySDM/KiD dry): dry partial pressure P_dry -- only self-consistent
 #     when the state was initialized via the ρ_dry/P_dry (hydrostatic_pysdm)
 #     path, since that's what calibrates what a given θ number means.
+"""
+    R_m(q_vap, constants)
+
+    Gas constant for moist air #technically not in use now (returns Rd)
+"""
 @inline R_m(q_vap, constants) = constants.Rd
+"""
+    Cp_m(q_vap, constants)
+
+    Specific heat capacity for moist air #technically not in use now (returns dry Cp)
+"""
 @inline Cp_m(q_vap, constants) = constants.Cp_air
 
+"""
+    θl(P, T, ql, q_vap, constants)
+"""
 θl(P,T,ql,q_vap,constants) = constants.dry_theta_convention ?
     (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* (T .- constants.L .*ql ./constants.Cp_air) :
     (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* (T .- constants.L .*ql ./Cp_m.(q_vap, constants))
 
+"""
+    θ_from_θl(P, θl_val, ql, q_vap, constants)
+"""
 θ_from_θl(P,θl_val,ql,q_vap,constants) = constants.dry_theta_convention ?
     θl_val .+ (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) .* constants.L .* ql ./ constants.Cp_air :
     θl_val .+ (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants)) .* constants.L .* ql ./ Cp_m.(q_vap, constants)
 
+"""
+    theta_from_T(T, P, q_vap, constants)
+"""
 theta_from_T(T,P,q_vap,constants) = constants.dry_theta_convention ?
     T .* (constants.P0 ./ calc_P_dry_from_P.(P,q_vap,Ref(constants))).^(constants.Rd / constants.Cp_air) :
     T .* (constants.P0 ./ P).^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 
+"""
+    theta_from_T!(θ, T, P, q_vap, constants)
+"""
 theta_from_T!(θ, T, P, q_vap,constants) = constants.dry_theta_convention ?
     (@. θ = (T * (constants.P0 / calc_P_dry_from_P(P,q_vap,constants))^(constants.Rd / constants.Cp_air))) :
     (@. θ = (T * (constants.P0 / P)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))))
 
+"""
+    T_from_theta(θ, P, q_vap, constants)
+"""
 @inline T_from_theta(θ,P,q_vap,constants) = constants.dry_theta_convention ?
     θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air) :
     θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants))
 
+"""
+    T_from_theta!(T, θ, P, q_vap, constants)
+"""
 T_from_theta!(T, θ, P, q_vap,constants) = constants.dry_theta_convention ?
     (@. T = θ * (calc_P_dry_from_P(P,q_vap,constants) / constants.P0)^(constants.Rd / constants.Cp_air)) :
     (@. T = θ * (P / constants.P0)^(R_m(q_vap, constants) / Cp_m(q_vap, constants)))
 
+"""
+    R_m_moist(q_vap, constants)
+"""
 @inline R_m_moist(q_vap, constants) = (constants.Rd + mixing_ratio(q_vap) * constants.Rv) / (1 + mixing_ratio(q_vap))
 
+"""
+    ρ_ideal_gas(P, T, q_vap, constants)
+"""
 ρ_ideal_gas(P,T,q_vap,constants) = constants.dry_theta_convention ?
     P ./ (R_m_moist.(q_vap, constants) .* T) :
     P ./ (constants.Rd .* T_virtual(T,q_vap,constants))
 
+"""
+    ρ_ideal_gas!(ρ, P, T, q_vap, constants)
+"""
 ρ_ideal_gas!(ρ, P, T, q_vap, constants) = constants.dry_theta_convention ?
     (@. ρ = P / (R_m_moist(q_vap, constants) * T)) :
     (@. ρ = P / (constants.Rd * T_virtual(T,q_vap,constants)))

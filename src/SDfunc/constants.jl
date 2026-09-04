@@ -23,6 +23,13 @@ A struct representing constants used in the Droplets package.
 - `L`: latent heat of vaporization (default: 22.6e5).
 - `Cp`: specific heat of dry air at constant pressure (default: 4181).
 - `σSB`: Stefan-Boltzmann constant (default: 5.670374419e-8).
+- `T0`: reference temperature (default: 273.15).
+- `P0`: reference pressure (default: 100000.0).
+- `P_SLP`: standard sea level pressure (default: 101325.0).
+- `ϵ`: molar mass ratio of water vapor to dry air (default: 0.622).
+- `Ω`: Earth's rotation rate in radians per second (default: 7.2921150e-5).
+- `dry_theta_convention`: boolean indicating whether to use dry partial pressure 
+    convention for potential temperature (default: false), build for prescribed KiD thermo.
 
 """
 Base.@kwdef struct Constants{FT<:AbstractFloat}

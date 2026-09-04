@@ -2,6 +2,18 @@ export scm_states, scm_wind, scm_diagnostics, scm_eulerian_arrays, create_scm_gr
 export scm_outputs, condensation_data #, radiation_data
 export turbulence_data
 
+
+"""
+    scm_states
+
+    State variables for the SCM, including pressure, temperature, water vapor mixing ratio, 
+    liquid water content, potential temperature, density, turbulent kinetic energy, and dissipation rate.
+
+    everything but P_faces is at cell centers_z
+
+    _tmp denotes conventionally diagnostic variables
+    
+"""
 struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
     nz::Int
     P::Vector{FT}
@@ -26,13 +38,25 @@ struct scm_states{FT<:AbstractFloat} #<:droplet_attributes{FT}
 end
 
 
+"""
+    scm_wind
 
+    Wind components for the SCM, including u, v, and w velocities.
+    W component is at cell faces_z, u and v are at cell centers_z
+
+"""
 struct scm_wind{FT<:AbstractFloat}
     u::Vector{FT}
     v::Vector{FT}
     w::Vector{FT}
 end
 
+"""
+    scm_diagnostics
+
+    Diagnostic variables calculated from the droplet attributes
+
+"""
 struct scm_diagnostics{FT<:AbstractFloat}
     # rh::Vector{FT}
     aerosol_effective_radius::Vector{FT}
@@ -46,6 +70,12 @@ struct scm_diagnostics{FT<:AbstractFloat}
     rain_number::Vector{FT}
 end
 
+"""
+    scm_outputs
+
+    Output arrays for the SCM, storing time series of state variables and diagnostics at each output step.
+
+"""
 struct scm_outputs{FT<:AbstractFloat}
     time::Vector{FT}
     P::Matrix{FT}
@@ -150,6 +180,12 @@ function scm_outputs(num_levels::Int, t_max::Int, dt_output::FT)::scm_outputs{FT
         )
 end
 
+
+"""
+    scm_eulerian_arrays
+
+    Container for all SCM arrays, including state variables, wind components, diagnostics, and output arrays.
+"""
 struct scm_eulerian_arrays{FT<:AbstractFloat}
     nz::Int
     dz::FT
@@ -183,6 +219,12 @@ function create_scm_grids(num_levels::Int, dz::FT,droplets::droplet_attributes_1
 end
 
 
+"""    
+    condensation_data
+
+    Container for condensation-related data allocations, including condensation source terms, radiative effects, and droplet volume changes.
+
+"""
 struct condensation_data{FT<:AbstractFloat}
     condensation_src::Vector{FT}
     condensation_rad_net::Vector{FT}
@@ -193,6 +235,7 @@ struct condensation_data{FT<:AbstractFloat}
     c_cell::Vector{FT}
     radcoeff_cell::Vector{FT}
 end
+
 
 function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_data{FT} where FT<:AbstractFloat
     condensation_src = zeros(FT, num_levels)
@@ -207,6 +250,12 @@ function condensation_data(::Type{FT},num_levels::Int,nsd::Int)::condensation_da
         S_env_cell, c_cell, radcoeff_cell)
 end
 
+"""
+    turbulence_data
+
+    Container for turbulence-related data allocations, including mixing length, shear and buoyancy production, eddy diffusivities, and implicit diffusion coefficients.
+
+"""
 struct turbulence_data{FT<:AbstractFloat} 
     l::Vector{FT} # mixing length
     SM::Vector{FT} # shear production

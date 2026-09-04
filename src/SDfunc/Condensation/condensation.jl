@@ -14,15 +14,6 @@ export limitsat, condensation_time_step_spatial!, apply_thermo_feedback!
 ######################################################################
 # 
 
-"""
-    FK(T, constants)
-    FD(T, constants)
-    Functions in the Denominator of the Köhler Equation
-
-Uses the constants structs defined in Droplets
-# Arguments
-- `T`: Temperature in K
-"""
 function FK(T,constants) 
     Fk = (constants.L /(constants.Rv *T) -1)*(constants.L*constants.ρl)/(constants.k *T) 
     return Fk
@@ -38,23 +29,38 @@ end
 
 ######################################################################
 # Saturation Functions
-
+"""
+    esat(T)
+    Calculate the saturation vapor pressure (Pa) at temperature T (K) using the August–Roche–Magnus approximation.
+    
+    # Arguments
+    - `T`: Temperature in Kelvin (K).
+    
+    # Returns
+    - Saturation vapor pressure in Pascals (Pa).
+"""
 #saturation vapor pressure
 @inline esat(T) = 610.94 * exp(17.625 * (T - 273.15) / ((T - 273.15) + 243.04)) ## August–Roche–Magnus approximation, hPa to Pa, T in K, converted to C
 
-#environmntal vapor pressure based on the mixing ratio of water vapor to air
+"""
+    sat(qv, P)
+    Calculate the environmntal vapor pressure based on the mixing ratio of water vapor to air
+"""
 @inline sat(qv::FT,P::FT) where FT<:AbstractFloat = FT(qv*P/(FT(0.378)*qv + FT(0.622))) ##qvarray is the specific humidity: mixing ratio of water vapor to moist air, Pa
 
 
 ######################################################################
-# The following ode functions are for the condensation radial growth of a droplet
-#examples for using DifferentialEquations
-#drdtcondensation1 p = (a,b,S,M,denom)
-#drdtcondensation2 p = (M,m,T,qv,P)
-#drdtcondensation3 p = (M,m,T,Senv)
-#where S is environmental saturation, M is the mass of the solute,
-#m is the molecular weight of the solute, T is the temperature, 
-#qv is the mixing ration, and P is the pressure
+"""
+drdtcondensation1 p = (a,b,S,M,denom)
+drdtcondensation2 p = (M,m,T,qv,P)
+drdtcondensation3 p = (M,m,T,Senv)
+
+The following ode functions are for the condensation radial growth of a droplet
+examples for using DifferentialEquations
+where S is environmental saturation, M is the mass of the solute,
+m is the molecular weight of the solute, T is the temperature, 
+qv is the mixing ration, and P is the pressure
+"""
 
 function drdtcondensation1(u, p, t)
     a, b, S, M,denom = p
@@ -74,11 +80,7 @@ function drdtcondensation3(u,p,t)
 end
 
 ######################################################################
-#This function calculate the RHS of the Köhler equation
-# drdt = ___
-# Can take either the (mixing ratio and pressure) or (environmental saturation) as an argument
 """
-Methods:
     -drkohler(R, M, m, T, qv, P, timestep)
     -drkohler(R, M, m, T, Senv, timestep)
 
@@ -110,6 +112,10 @@ function drkohler(R, M, m, T, Senv,constants, timestep)
     return dr #R + dr * timestep > 0 ? dr : -R / timestep
 end
 
+"""
+    drkappakohler(R, dry_r3, kappa, T, Senv, constants, timestep; rad_term=0.0)
+    Calculate the change in droplet radius over a timestep using the Köhler equation with kappa parameterization.
+"""
 function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     b = kappa * dry_r3
     # M = 4/3 * π * dry_r3 * ρ_solute
@@ -118,16 +124,19 @@ function drkappakohler(R,dry_r3,kappa,T,Senv,constants,timestep;rad_term=0.0)
     # dr = (Senv - 1 .- (akk(T) ./ R) .+ b .* M ./(R .^ 3)) ./(denom .* R)
     dr = (Senv - 1.0 - (akk(T) / R) + (kappa * dry_r3) / R^3) / (denom * R)
     
-    #if rad_term * fk / (constants.L*constants.ρl * denom) > 1e-6
-    #    println(dr,' ',rad_term * fk / (constants.L*constants.ρl * denom))
-    #end
-
-    # dr += rad_term * fk / (constants.L*constants.ρl * denom) 
-        
-
     return dr#R + dr * timestep > 0 ? dr : -R / timestep
 end
 
+"""
+    dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, c::FT, radcoeff::FT, constants::Constants{FT},
+    raddata::Rad,absliq_r_interp::Abs,timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Abs, Rad}
+
+    Update the volume of a droplet using the Köhler equation with kappa parameterization and bisection method (Arabas and Shima 2017) using square radius.
+
+    Built for use inside spatial condensation step, some cell-level quantities are pre-calculated and passed in as arguments.
+
+    with REM::DynON, droplet radiative heating is considered in the growth rate.
+"""
 function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, c::FT, radcoeff::FT, constants::Constants{FT},
     raddata::Rad,
     absliq_r_interp::Abs,
@@ -596,7 +605,10 @@ function dX_droplets!(X,dry_r3, kappa, qv, T, P, constants,dt)
     return dX
 end
 
-
+"""
+    set_X_crit!(droplets, i, kappa, T)
+    Set droplet to volume corresponding to critical radius for condensation for a specific droplet
+"""
 function set_X_crit!(droplets,i,kappa,T)
     # Set the critical volume for condensation
     b = kappa * droplets.dry_r3[i]
@@ -607,44 +619,23 @@ end
 
 
 
-# function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
-#     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
-#     dry_r3 = droplets.dry_r3[drop_idx]
-#     dry_r = (dry_r3)^(1/3)
-#     R_guess = max(dry_r * 2, 1e-8)
-    
-#     for i in 1:4
-        
-#         kelvin_term = akk(T) / R_guess
-#         kappa_term = kappa * dry_r3 / (R_guess^3)
-        
+"""
+    find_equilibrium_radius(droplets, drop_idx, kappa, T, S_env, constants; max_iter=100, tol=1e-12)
+    Find the equilibrium radius of a droplet given its dry radius and environmental conditions.
 
-#         f = S_env - 1.0 - kelvin_term + kappa_term
-        
-#         if abs(f) < tol
-#             droplets.X[drop_idx] = radius_to_volume(R_guess)
-#             #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_guess m")
-#             return
-#         end
+    # Arguments
+    - `droplets`: A structure containing droplet attributes.
+    - `drop_idx`: Index of the droplet to find the equilibrium radius for.
+    - `kappa`: Hygroscopicity parameter of the droplet.
+    - `T`: Temperature (K).
+    - `S_env`: Environmental saturation (dimensionless). Caps at 1 to have solution
+    - `constants`: Physical constants used in calculations.
+    - `max_iter`: Maximum number of iterations for the bisection method (default: 100).
+    - `tol`: Tolerance for convergence (default: 1e-12).
 
-#         dS_dR = (-kelvin_term/R_guess + 3*kappa_term/R_guess)
-#         R_new = R_guess - f / dS_dR
-          
-#         R_new = max(R_new, dry_r * 1.01)  # Must be larger than dry radius
-#         R_new = min(R_new, 1e-3)          # Cap at 1mm
-        
-#         if abs(R_new - R_guess) < tol
-#             droplets.X[drop_idx] = radius_to_volume(R_new)
-#             #println("Equilibrium radius converged for droplet $drop_idx: dry_r= $dry_r R = $R_new m")
-#             return
-#         end
-        
-#         R_guess = R_new
-#     end
-    
-#     return
-# end
-
+    # Returns
+    Updates the droplet's volume in the `droplets` structure to reflect the equilibrium radius.
+"""
 function find_equilibrium_radius(droplets,drop_idx, kappa, T, S_env,constants; max_iter=100, tol=1e-12)
     #println("Finding equilibrium radius for droplet $drop_idx with S_env=$S_env, T=$T")
     if S_env >=1.0
@@ -725,10 +716,28 @@ end
 #     end
 # end
 
-
+"""
+    limitsat(scmsettings.spinupsaturation, S)
+    Limit the supersaturation to 1%, used for spinup
+"""
 limitsat(::DynON, S) = min(S, 1.01)
 limitsat(::DynOFF, S) = S
 
+"""
+    apply_thermo_feedback!(scmsettings.thermo_feedback, state, z, dqv, constants)
+    Apply thermodynamic feedback to the state variables based on condensation/evaporation.
+    Turned off for prescribed thermodynamics (such as KiD)
+
+    # Arguments
+    - `scmsettings.thermo_feedback`: A flag indicating whether to apply thermodynamic feedback.
+    - `state`: The current state of the system, containing temperature, pressure, and mixing ratios.
+    - `z`: The index of the grid cell being updated.
+    - `dqv`: The change in water vapor mixing ratio due to condensation/evaporation.
+    - `constants`: Physical constants used in calculations.
+
+    # Returns
+    Updates the state variables in place based on the condensation/evaporation process.
+"""
 function apply_thermo_feedback!(::DynON, state, z, dqv, constants)
     state.T_tmp[z] -= dqv * constants.L / constants.Cp_air
     state.θ[z] = theta_from_T(state.T_tmp[z], state.P[z],state.qv[z], constants)
@@ -738,6 +747,30 @@ apply_thermo_feedback!(::DynOFF, state, z, dqv, constants) = nothing
 function condensation_time_step_spatial!(::DynOFF,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
     condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
 end
+
+"""
+    condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+    Calculate the condensation time step for each droplet in the simulation.
+
+    # Arguments
+    - `droplets`: A structure containing droplet attributes.
+    - `state`: The current state of the system, containing temperature, pressure, and mixing ratios.
+    - `nz`: Number of vertical grid cells.
+    - `Δtg`: Time step for the simulation.
+    - `conddata`: A structure to store condensation-related data.
+    - `constants`: Physical constants used in calculations.
+    - `condsettings`: Settings related to condensation processes.
+    - `spatialsettings`: Settings related to spatial discretization.
+    - `raddata`: A structure containing radiation-related data.
+    - `scmsettings`: Settings for the single-column model (SCM).
+    - `absliq_r_interp`: Interpolation function for liquid absorption properties.
+    - `m_t`: Mass of the droplet.
+
+    # Returns
+    Updates the droplet volumes and state variables in place based on condensation/evaporation processes.
+"""
+
 function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
     condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
     # Calculate condensation time step for each droplet
@@ -798,11 +831,5 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
         end
     end
     
-    # dqvap = - vol_change .* constants.ρl ./ (state.ρ .* spatialsettings.area_per_grid * spatialsettings.z_grid_height)
-    # state.qv .+= dqvap
-    # state.T_tmp .-= dqvap * constants.L ./ (constants.Cp_air)
-    # state.θ .= theta_from_T(state.T_tmp, state.P, constants)
-    # state.ρ .= ρ_ideal_gas(state.P, state.T_tmp, state.qv, constants)
-
     return
 end
