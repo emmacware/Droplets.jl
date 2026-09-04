@@ -6,25 +6,23 @@ using Distributions
 using Interpolations
 using Random
 
-include("../radiation_call.jl")
 include("../initial_state_functions.jl")
 # using OrdinaryDiffEqBDF
 
 const FT = Float64
 # kid1d's initial state (ρ_dry/P_dry via hydrostatic_pysdm below) is built on the
 # dry-partial-pressure θ/T convention, so it needs its own `constants` rather than
-# the package default (which DyCOMS relies on staying on the standard, total-P
-# convention that matches its case-spec θ values). See conversions.jl.
+# the package default. See conversions.jl.
 const kid_constants = Constants{FT}(dry_theta_convention=true)
 
 # ── Numerical settings ────────────────────────────────────────────────────────
 const Z_max = 3000.0   # m
-const dz    = 50.0     # m
+const dz    = 10.0     # m
 const nz    = Int(Z_max / dz)   #
-const dt    = 5.0      # s
+const dt    = 1.0      # s
 const dt_coag = 0.1
 const dt_cond = 0.1
-const Ns_per_grid = 128
+const Ns_per_grid = 64
 seed = 42
 Random.seed!(seed)
 const t_max    = 3600  # s  (60 min)
@@ -57,8 +55,7 @@ const P_surface_kid            = 99000.0 # Pa  (Shipway & Hill 2012 reference)
 
 # ── Settings structs ──────────────────────────────────────────────────────────
 
-spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=1.0,
-    weighted_droplet_allocation=false)#5.0)
+spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=100.0,)
 
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt_coag,kernel=hydrodynamic,hydrodynamic_collision_eff_func=false)
 
@@ -69,55 +66,58 @@ mpdatasettings = mpdata_settings_1d(nz,n_corr=2,nonoscillatory=true, vertical_bo
         )
 
 tkesettings = tke_settings{FT}() #necessary but not used
-    
-diagnosticsettings = diagnostic_settings()
-   
+
+diagnosticsettings = diagnostic_settings{FT}()
+
 #Dynamics
-base_scm = (
-    Δt                          = dt,
+dyn = dynamic_settings(
     turbulence                  = DynOFF(),
     motion                      = DynON(),
     advection                   = DynON(),
-    radiation                  = DynOFF(),
+    radiation                   = DynOFF(),
     condensation                = DynON(),
+    turbulent_droplet_diffusion_on = DynOFF(),
+    keep_grid_filled            = DynOFF(),
+    recycling                   = DynOFF(),
+    settling                    = DynOFF(),
+    spinupsaturation            = DynOFF(),
+    coalescence                 = DynOFF(),
+    top_escape                  = DynON(),
+    thermo_feedback             = DynOFF(),
+    density_feedback            = DynOFF(),
+    )
+
+scmsettings = scm_settings{FT}(
+    spatial = spatialsettings,
+    coagsettings = coagsettings,
+    condsettings = condensationsettings,
+    tkesettings = tkesettings,
+    mpdatasettings = mpdatasettings,
+    diagnosticsettings = diagnosticsettings,
+    dynamics = dyn,
+    Δt                          = dt,
     n_cond                      = round(Int, dt / dt_cond),
     n_coag                      = round(Int, dt / dt_coag),
     spinup_time                 = 0.0,
-    turbulent_droplet_diffusion_on = DynOFF(),
-    keep_grid_filled            = DynOFF(), 
-    recycling                    = DynON(), 
-    REM                         = DynOFF(),
-    settling                     = DynOFF(),
-    spinupsaturation            = DynOFF(),
-    coalescence                  = DynOFF(),
-    top_escape                   = DynON(),
-    thermo_feedback             = DynOFF(),
-    density_feedback            = DynOFF(),
-    n_rad                       = 1
+    n_rad                       = 1,
     )
 
 
-scmsettings = scm_settings{FT}(; base_scm...,)
-diagnosticsettings = diagnostic_settings()
-
-
-# step_forcing! updates grid.wind.w (used by
-# advection) and rebuilds the droplet-motion prescribed_w(z) closure every step.
+# step_forcing! updates grid.wind.w 
 function w_forcing!(grid, droplets, i, dt)
     rho_w_t = prescribed_rho_w(i * dt)
     grid.wind.w .= rho_w_t #says w but is really just advector, might namechange later
     return z -> rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
 end
 
-# Build environment and run
-grid = run_scm(nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), initial_aerosol_dist,
-    coagsettings, spatialsettings, condensationsettings, tkesettings, kid_constants,
-    mpdatasettings, diagnosticsettings, scmsettings;
-    deterministic_multiplicity = true,
-    hydrostatic_pysdm = true,
+grid, droplets, scmdata = initialize_scm_environment(nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), 
+    initial_aerosol_dist,scmsettings, kid_constants; deterministic_multiplicity = true,
+    hydrostatic_pysdm = true)
+
+run_scm!(grid, droplets, scmdata, kid_constants, scmsettings, z -> zero(FT);
     step_forcing! = w_forcing!,
     )
-#output is in grid.output
+
 
 #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid; constants=kid_constants),tskips=20)#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")

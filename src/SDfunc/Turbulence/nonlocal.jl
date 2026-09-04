@@ -467,14 +467,14 @@ end
 """
     run_droplet_diffusion!(scheme, onoff, l, droplets, grid, tke, dt, K_h, e_prev)
 
-Dispatch on `scmsettings.droplet_diffusion_scheme` to the corresponding
+Dispatch on `dynamics.droplet_diffusion_scheme` to the corresponding
 turbulent droplet transport implementation in this file:
 `NoDropletDiffusion` → no-op,
 `OUDropletDiffusion` → [`turbulent_droplet_diffusion!`](@ref),
 `WellMixedDropletDiffusion` → [`turbulent_droplet_diffusion_wellmixed!`](@ref),
 `WeilDropletDiffusion` → `weil_turbulent_droplet_diffusion!`,
 `VisserDropletDiffusion` → [`turbulent_droplet_diffusion_visser!`](@ref).
-`onoff` is `scmsettings.turbulent_droplet_diffusion_on`, an independent
+`onoff` is `dynamics.turbulent_droplet_diffusion_on`, an independent
 `DynON`/`DynOFF` master switch forwarded to whichever scheme is picked.
 """
 run_droplet_diffusion!(::NoDropletDiffusion, onoff, l, droplets, grid, tke, dt, K_h, e_prev) = nothing

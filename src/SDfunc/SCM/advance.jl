@@ -1,4 +1,4 @@
-export single_column_timestep, update_theta!, update_density!, recycle_precipitation!, recycle_top_escape!, fill_grid_ranges!, keep_layer_filled!, radiation_function!
+export single_column_timestep, update_theta!, update_density!, recycle_precipitation!, recycle_top_escape!, fill_grid_ranges!, keep_layer_filled!, radiation_function!, run_scm!
 
 """
 radiation_function!
@@ -20,18 +20,21 @@ single_column_timestep
 
 """
 function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets::droplet_attributes{FT},
-    coagsettings::coag_settings{FT}, spatialsettings::spatial_settings{FT},
-    condensationsettings::condensation_settings{FT}, coagdata::coagulation_run_spatial,
-    conddata::condensation_data{FT}, raddata::rad,turbdata::turbulence_data{FT},
-    diagnosticsettings::diagnostic_settings{FT},
-    prescribed_w::Function, mpdatatmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
+    coagdata::coagulation_run_spatial, conddata::condensation_data{FT}, raddata::rad, turbdata::turbulence_data{FT},
+    prescribed_w::Function, mpdatatmp::mpdata_tmp_1d,
     constants::Constants{FT},
     scmsettings::scm_settings{FT},
-    tkesettings::tke_settings{FT},
-    absliq_r_interp,
     i::Int
 
 ) where {FT<:AbstractFloat, rad}
+    spatialsettings = scmsettings.spatial
+    diagnosticsettings = scmsettings.diagnosticsettings
+    condensationsettings = scmsettings.condsettings
+    coagsettings = scmsettings.coagsettings
+    mpdatasettings = scmsettings.mpdatasettings
+    tkesettings = scmsettings.tkesettings
+    dynamics = scmsettings.dynamics
+
     nz = spatialsettings.Nz
     output_idx = Int(floor(i*dt/spatialsettings.dt_output) +1)
     n_output = spatialsettings.dt_output / dt
@@ -45,18 +48,18 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     end
 
     # 3.679 ms (2 allocations: 128 bytes) #REM off
-    radiation_function!(scmsettings.radiation,grid, spatialsettings, diagnosticsettings, constants, raddata, dt, i, scmsettings.n_rad)
+    radiation_function!(dynamics.radiation,grid, spatialsettings, diagnosticsettings, constants, raddata, dt, i, scmsettings.n_rad)
 
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
     for _ in 1:scmsettings.n_cond
         #911.292 μs (48 allocations: 20.97 KiB)
-        condensation_time_step_spatial!(scmsettings.condensation,droplets, grid.states, nz, dt/scmsettings.n_cond, conddata, constants, condensationsettings, spatialsettings, raddata,scmsettings,absliq_r_interp, i*dt)
+        condensation_time_step_spatial!(dynamics.condensation,droplets, grid.states, nz, dt/scmsettings.n_cond, conddata, constants, condensationsettings, spatialsettings, raddata,dynamics, i*dt)
     end
 
 
 
 
-    coalescence_timestep!(scmsettings.coalescence,scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings, scmsettings.n_coag)
+    coalescence_timestep!(dynamics.coalescence,scmsettings.coag_threading, scmsettings.scheme, droplets, coagdata, coagsettings, scmsettings.n_coag)
 
     #2.990 μs (12 allocations: 5.31 KiB)
     T_from_theta!(grid.states.T_tmp,grid.states.θ, grid.states.P, grid.states.qv,constants)
@@ -69,7 +72,7 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
 
     # Environmental advection
     #  160.250 μs (1799 allocations: 779.50 KiB)
-    turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
+    turb_timestep!(dynamics.turbulence,grid, tkesettings, constants, dt, dynamics, turbdata)
 
     #(32.916 μs (2 allocations: 1.06 KiB)
     compute_ql_all_cells!(grid.states, constants)
@@ -80,25 +83,72 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
         grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     end
     #88.291 ns (1 allocation: 64 bytes)
-    update_theta!(scmsettings.density_feedback, grid, constants)
+    update_theta!(dynamics.density_feedback, grid, constants)
     #(3.010 μs (1 allocation: 64 bytes))
-    update_density!(scmsettings.density_feedback, grid, constants)
+    update_density!(dynamics.density_feedback, grid, constants)
 
     #33.167 μs (24 allocations: 13.30 KiB)
-    mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
+    mpdata_scm!(dynamics.advection, dynamics.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
     # 197.083 μs (16 allocations: 704 bytes)
-    update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
+    update_droplet_positions!(dynamics.motion,dynamics.advection,dynamics.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
 
 
     #(28.000 μs (49 allocations: 928 bytes))
-    recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
-    recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings, grid, constants)
+    recycle_precipitation!(dynamics.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
+    recycle_top_escape!(dynamics.top_escape, droplets, spatialsettings, grid, constants)
     #18.833 μs (53 allocations: 1.03 KiB)
-    keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants, min_count = Int(floor(1.3 * coagsettings.Ns/spatialsettings.Nz)))
+    keep_layer_filled!(dynamics.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants, min_count = Int(floor(1.3 * coagsettings.Ns/spatialsettings.Nz)))
     #  12.916 μs (0 allocations: 0 bytes)
     fill_grid_ranges!(droplets)
 
 return nothing
+end
+
+"""
+run_scm!
+
+    Advance a pre-built SCM environment (`grid`, `droplets`, `scmdata`) from t=0 to
+    `scmsettings.spatial.t_max` in steps of `scmsettings.spatial.dt`, running
+    `scmspinupsettings` for the spin-up window (`scmsettings.spinup_time`) and
+    `scmsettings` afterward. `dt`/`t_max` are read from `scmsettings.spatial` rather than
+    taken as separate arguments so they can't drift out of sync with the rest of the run.
+
+    Case-specific environment construction (grid/droplet initialization, radiation data,
+    etc.) happens beforehand, so that the hydrostatic solve isnt a dependency
+
+    Returns 'droplets_snapshots` if `snapshot_every` is given.
+"""
+function run_scm!(grid, droplets, scmdata::scm_data, constants::Constants{FT}, scmsettings::scm_settings{FT}, prescribed_w::Function;
+        scmspinupsettings::scm_settings{FT} = scmsettings,
+        step_forcing!::Function = (grid, droplets, i, dt) -> nothing,
+        verbose_every = 100,
+        snapshot_every = nothing,
+    ) where {FT<:AbstractFloat}
+
+    dt = scmsettings.spatial.dt
+    t_max = scmsettings.spatial.t_max
+    spinup_step = round(Int, scmsettings.spinup_time / dt)
+    n_steps = Int(t_max / dt)
+
+    droplets_snapshots = snapshot_every === nothing ? nothing : Dict{Int, droplet_attributes}()
+
+    for i in 1:n_steps
+        if verbose_every !== nothing && i*dt % verbose_every == 0
+            println("Timestep: ", i*dt)
+        end
+        if snapshot_every !== nothing && i*dt % snapshot_every == 0
+            droplets_snapshots[Int(div(i*dt, snapshot_every))] = deepcopy(droplets)
+        end
+
+        forcing_override = step_forcing!(grid, droplets, i, dt)
+        w_i = forcing_override === nothing ? prescribed_w : forcing_override
+        settings_i = i <= spinup_step ? scmspinupsettings : scmsettings
+
+        single_column_timestep(grid, dt, droplets, scmdata.coagdata, scmdata.conddata, scmdata.raddata, scmdata.turbdata,
+            w_i, scmdata.mpdatatmp, constants, settings_i, i)
+    end
+
+    return snapshot_every === nothing ? nothing : (grid, droplets_snapshots)
 end
 
 

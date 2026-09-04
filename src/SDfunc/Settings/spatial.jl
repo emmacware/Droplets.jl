@@ -1,4 +1,4 @@
-export spatial_settings, spatial_settings_1d, spatial_settings_2d, diagnostic_settings, scm_settings
+export spatial_settings, spatial_settings_1d, spatial_settings_2d, diagnostic_settings, dynamic_settings, scm_settings
 export Dynamic, DynON, DynOFF
 export ThermoVariable, ThetaQvVar, ThetalQtVar
 export MixingLengthScheme, DeardorffMixing, BottMixing, EDMFXMixing
@@ -23,7 +23,7 @@ Base.@kwdef struct spatial_settings_1d{FT<:AbstractFloat} <:spatial_settings{FT}
     Nz::Int = 30 
     Z_max::FT = FT(1500.0)
     z_grid_height::FT = Z_max / Nz
-    area_per_grid::FT = 100.0 #m^2, only used for 1d case to calculate the volume of each grid cell
+    area_per_grid::FT = 100.0 #m^2, used to calculate the volume of each grid cell
     periodic_boundaries_x::Bool = true
     settling::Bool = true
     dt::FT = FT(1.0)
@@ -32,7 +32,7 @@ Base.@kwdef struct spatial_settings_1d{FT<:AbstractFloat} <:spatial_settings{FT}
     # true: allocate initial superdroplets across cells proportional to the qv-derived
     # weights computed in init_droplets_dycoms_scm (thicker seeding near cloud top,
     # thin entrainment-zone layer above the inversion); false: uniform Ns/nz per cell.
-    weighted_droplet_allocation::Bool = true
+    weighted_droplet_allocation::Bool = false
 end
 
 # Diagnostics Struct
@@ -69,25 +69,25 @@ struct VisserDropletDiffusion <: DropletDiffusionScheme end      # turbulent_dro
 
 """
 
-scm_settings
+dynamic_settings
 
     Settings for the SCM, including timestep, number of substeps for condensation/coagulation/radiation,
     and which dynamics are on/off.
 
 """
-struct scm_settings{FT<:AbstractFloat, Thr, Sch,
+struct dynamic_settings{#FT<:AbstractFloat, Thr, Sch,
         Turb<:Dynamic, Cond<:Dynamic, REM_T<:Dynamic, Mot<:Dynamic,
         SpinupSat<:Dynamic, Rad<:Dynamic, Coag<:Dynamic, Sett<:Dynamic,
         Adv<:Dynamic, Rec<:Dynamic, TopEsc<:Dynamic, ThermoFB<:Dynamic, TurbDiff<:Dynamic,
         KeepFill<:Dynamic, DropDiff<:DropletDiffusionScheme, DensFB<:Dynamic}
-    init_random_seed::Int
-    coag_threading::Thr
-    scheme::Sch
-    Δt::FT
-    n_cond::Int
-    n_coag::Int
-    n_rad::Int
-    spinup_time::FT
+    # init_random_seed::Int
+    # coag_threading::Thr
+    # scheme::Sch
+    # Δt::FT
+    # n_cond::Int
+    # n_coag::Int
+    # n_rad::Int
+    # spinup_time::FT
     turbulence::Turb
     condensation::Cond
     REM::REM_T
@@ -107,20 +107,17 @@ struct scm_settings{FT<:AbstractFloat, Thr, Sch,
     # DynOFF: the dry background state (ρ_dry, P_dry, captured once at init) is held fixed for the whole run, and total
     # ρ/P are re-diagnosed from evolving qv 
     density_feedback::DensFB
+    # coagsettings::coag_settings{FT}
+    # condsettings::condensation_settings{FT}
+    # spatial::spatial_settings_1d{FT}
+    # tkesettings::tke_settings{FT}
+    # mpdatasettings::mpdata_settings_1d{FT}
 end
 
-function scm_settings{FT}(;
-        init_random_seed::Int             = Int(30),
-        coag_threading                    = Serial(),
-        scheme                            = none(),
-        Δt::FT                            = FT(1.0),
-        n_cond::Int                       = Int(10),
-        n_coag::Int                       = Int(10),
-        n_rad::Int                        = Int(1),
-        spinup_time::FT                   = FT(3600.0),
+function dynamic_settings(;
         turbulence::Dynamic               = DynON(),
         condensation::Dynamic             = DynON(),
-        REM::Dynamic                      = DynON(),
+        REM::Dynamic                      = DynOFF(),
         motion::Dynamic                   = DynON(),
         spinupsaturation::Dynamic         = DynON(),
         radiation::Dynamic                = DynON(),
@@ -134,16 +131,70 @@ function scm_settings{FT}(;
         keep_grid_filled::Dynamic         = DynON(),
         droplet_diffusion_scheme::DropletDiffusionScheme = OUDropletDiffusion(),
         density_feedback::Dynamic         = DynON(),
-    ) where {FT<:AbstractFloat}
-    scm_settings{FT, typeof(coag_threading), typeof(scheme),
+    )
+    dynamic_settings{
         typeof(turbulence), typeof(condensation), typeof(REM), typeof(motion),
         typeof(spinupsaturation), typeof(radiation), typeof(coalescence),
         typeof(settling), typeof(advection), typeof(recycling),
         typeof(top_escape), typeof(thermo_feedback), typeof(turbulent_droplet_diffusion_on),
         typeof(keep_grid_filled), typeof(droplet_diffusion_scheme), typeof(density_feedback)}(
-        init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, n_rad, spinup_time,
         turbulence, condensation, REM, motion, spinupsaturation, radiation,
         coalescence, settling, advection, recycling, top_escape, thermo_feedback,
         turbulent_droplet_diffusion_on, keep_grid_filled, droplet_diffusion_scheme,
         density_feedback)
 end
+
+
+"""
+
+scm_settings
+
+    Top-level bundle of the settings structs needed to run the single-column model
+    (coalescence, condensation, turbulence, MPDATA advection, spatial grid), plus the
+    run-level scalars that don't belong to any one process: RNG seed, coalescence
+    threading/substep scheme, global timestep, condensation/coalescence/radiation
+    substep counts, and spin-up duration.
+
+"""
+struct scm_settings{FT<:AbstractFloat, Thr, Sch, Coag, Tke, Mp, Spat<:spatial_settings{FT}, Dyn}
+    init_random_seed::Int
+    coag_threading::Thr
+    scheme::Sch
+    Δt::FT
+    n_cond::Int
+    n_coag::Int
+    n_rad::Int
+    spinup_time::FT
+    coagsettings::Coag
+    condsettings::condensation_settings{FT}
+    tkesettings::Tke
+    mpdatasettings::Mp
+    spatial::Spat
+    dynamics::Dyn
+    diagnosticsettings::diagnostic_settings{FT}
+end
+
+function scm_settings{FT}(;
+        spatial::spatial_settings{FT}           = spatial_settings_1d{FT}(),
+        coagsettings::coag_settings{FT}         = coag_settings{FT}(),
+        condsettings::condensation_settings{FT} = condensation_settings{FT}(),
+        tkesettings                              = tke_settings{FT}(),
+        mpdatasettings                           = mpdata_settings_1d(spatial.Nz),
+        dynamics::dynamic_settings               = dynamic_settings(),
+        diagnosticsettings::diagnostic_settings{FT} = diagnostic_settings{FT}(),
+        init_random_seed::Int                  = Int(30),
+        coag_threading                         = Parallel(),
+        scheme                                 = none(),
+        Δt::FT                                 = FT(1.0),
+        n_cond::Int                            = Int(10),
+        n_coag::Int                            = Int(10),
+        n_rad::Int                             = Int(1),
+        spinup_time::FT                        = FT(3600.0),
+    ) where {FT<:AbstractFloat}
+    scm_settings{FT, typeof(coag_threading), typeof(scheme), typeof(coagsettings),
+        typeof(tkesettings), typeof(mpdatasettings), typeof(spatial), typeof(dynamics)}(
+        init_random_seed, coag_threading, scheme, Δt, n_cond, n_coag, n_rad, spinup_time,
+        coagsettings, condsettings, tkesettings, mpdatasettings, spatial, dynamics, diagnosticsettings)
+end
+
+Base.broadcastable(x::scm_settings) = Ref(x)

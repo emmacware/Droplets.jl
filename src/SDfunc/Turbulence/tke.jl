@@ -10,7 +10,7 @@ export mixing_length!
 
 
 """
-    turb_timestep!(::DynON, grid, tke, constants, dt, scmsettings, turbdata)
+    turb_timestep!(::DynON, grid, tke, constants, dt, dynamics, turbdata)
 
 Advance the TKE-closure turbulence scheme by one timestep. Computes the
 mixing length (`tke.mixing_length_scheme`) and Mellor-Yamada stability
@@ -21,7 +21,7 @@ the resulting vertical-transport TKE tendency, then updates TKE via
 production/dissipation with [`tke_update!`](@ref).
 
 """
-function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
+function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, dynamics::dynamic_settings,
     turbdata::turbulence_data) where FT
     nz = grid.nz
     dz = grid.dz
@@ -57,7 +57,7 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
     for k in 1:nz
         my25_stability_functions(l,K_h,K_m,K_e,GH,GM,SM,SH, k,tke,grid,constants)
     end
-    run_droplet_diffusion!(scmsettings.droplet_diffusion_scheme, scmsettings.turbulent_droplet_diffusion_on,
+    run_droplet_diffusion!(dynamics.droplet_diffusion_scheme, dynamics.turbulent_droplet_diffusion_on,
         l, droplets, grid, tke, dt, K_h, e_prev)
 
     diffuse_fields!(grid, tke, K_h,K_m,K_e,constants, dt,turbdata)
@@ -69,11 +69,11 @@ function turb_timestep!(::DynON,grid::scm_eulerian_arrays{FT}, tke::tke_settings
 end
 
 """
-    turb_timestep!(::DynOFF, grid, tke, constants, dt, scmsettings, turbdata)
+    turb_timestep!(::DynOFF, grid, tke, constants, dt, dynamics, turbdata)
 
 Turbulence scheme disabled.
 """
-function turb_timestep!(::DynOFF,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, scmsettings,
+function turb_timestep!(::DynOFF,grid::scm_eulerian_arrays{FT}, tke::tke_settings{FT}, constants::Constants{FT}, dt::FT, dynamics::dynamic_settings,
     turbdata::turbulence_data) where FT
 end
 

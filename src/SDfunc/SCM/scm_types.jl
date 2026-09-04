@@ -1,6 +1,7 @@
 export scm_states, scm_wind, scm_diagnostics, scm_eulerian_arrays, create_scm_grids
-export scm_outputs, condensation_data #, radiation_data
+export scm_outputs, condensation_data, radiation_data
 export turbulence_data
+export scm_data
 
 
 """
@@ -306,4 +307,74 @@ Base.broadcastable(x::scm_states) = Ref(x)
 Base.broadcastable(x::scm_wind) = Ref(x)
 Base.broadcastable(x::scm_diagnostics) = Ref(x)
 Base.broadcastable(x::scm_eulerian_arrays) = Ref(x)
+
+"""
+    radiation_data{FT, AS, CR}
+
+    RRTMGP-backed radiation working arrays/fluxes. The struct itself is generic (`AS`, `CR`
+    are free type params, so this definition carries no RRTMGP dependency); the constructor
+    that actually loads RRTMGP's lookup tables and builds `CArad`/`AS` lives in the Examples
+    radiation driver (`Droplets.radiation_data(::Type{FT}, nsd, grid, constants)`), which is
+    only included by cases that turn radiation on.
+"""
+struct radiation_data{FT<:AbstractFloat, AS, CR}
+    flux_up_lw::Array{FT,2}
+    flux_dn_lw::Array{FT,2}
+    flux_up_sw::Array{FT,2}
+    flux_dn_sw::Array{FT,2}
+    flux_net::Array{FT,2}
+    layerdata::Array{FT,2}
+    metric_scaling::Array{FT,2}
+    flux_up_arr::Array{FT,2}
+    flux_dn_arr::Array{FT,2}
+    hr_lay::Array{FT,2}
+    atmospheric_state::AS
+    flux_net_droplet::Matrix{FT}
+    cloud_heating_delta::Vector{FT}
+    cond_rad_term::Vector{FT}
+    CArad::CR
+end
+
+Base.broadcastable(x::radiation_data) = Ref(x)
+
+"""
+    radiation_data(::Type{FT}, nsd::Int, nz::Int; CArad=nothing) where FT<:AbstractFloat
+radiation allocations for SCM
+"""
+function radiation_data(::Type{FT}, nsd::Int, nz::Int; CArad=nothing) where {FT<:AbstractFloat}
+    z2 = zeros(FT, 0, 0)
+    return radiation_data{FT, Nothing, typeof(CArad)}(z2, z2, z2, z2, z2, z2, z2, z2, z2, z2,
+        nothing, zeros(FT, 0, 0), zeros(FT, nz), zeros(FT, nsd), CArad)
+end
+
+"""
+    scm_data
+
+    Bundle of the per-run mutable data/scratch allocations needed 
+"""
+struct scm_data{Coag, Cond, Rad, Mp, Turb}
+    coagdata::Coag
+    conddata::Cond
+    raddata::Rad
+    mpdatatmp::Mp
+    turbdata::Turb
+end
+
+"""
+    scm_data(grid, droplets, scmsettings::scm_settings{FT}; raddata=radiation_data(FT, scmsettings.coagsettings.Ns, scmsettings.spatial.Nz))
+
+Build allocations 
+"""
+function scm_data(grid, droplets, scmsettings::scm_settings{FT};
+        raddata = radiation_data(FT, scmsettings.coagsettings.Ns, scmsettings.spatial.Nz)) where {FT<:AbstractFloat}
+    nz = scmsettings.spatial.Nz
+    Ns = scmsettings.coagsettings.Ns
+    coagdata = coagulation_run_spatial{FT}(nz, Ns, droplets)
+    conddata = condensation_data(FT, nz, Ns)
+    mpdatatmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
+    turbdata = turbulence_data(FT, nz)
+    return scm_data(coagdata, conddata, raddata, mpdatatmp, turbdata)
+end
+
+Base.broadcastable(x::scm_data) = Ref(x)
 Base.broadcastable(x::scm_outputs) = Ref(x)

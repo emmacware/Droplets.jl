@@ -25,12 +25,10 @@ function read_radiation_tables()
     device = ClimaComms.device(context)
     DA = ClimaComms.array_type(device)
 
-    # lw_file = joinpath(@__DIR__, "../../data/rrtmgp-data-lw-g256-2018-12-04.nc")
-    lw_file = joinpath(@__DIR__, "../../data/rrtmgp-gas-lw-g256.nc")
-    sw_file = joinpath(@__DIR__, "../../data/rrtmgp-data-sw-g224-2018-12-04.nc")
-    # lw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-lw-g256.nc")
-    lw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-lw-bnd.nc")
-    sw_cld_file = joinpath(@__DIR__, "../../data/rrtmgp-clouds-sw-g224.nc")
+    lw_file = RRTMGP.ArtifactPaths.get_lookup_filename(:gas, :lw)
+    lw_cld_file = RRTMGP.ArtifactPaths.get_lookup_filename(:cloud, :lw)
+    sw_file = RRTMGP.ArtifactPaths.get_lookup_filename(:gas, :sw)
+    sw_cld_file = joinpath(dirname(RRTMGP.ArtifactPaths.get_lookup_filename(:cloud, :sw)), "rrtmgp-clouds-sw-g224.nc")
 
     # reading longwave gas optics lookup data
     lookup_lw, idx_gases = Dataset(lw_file,"r") do ds 
@@ -54,7 +52,7 @@ function read_radiation_tables()
 end
 
 
-struct radiation_clima_data_helper{FT<:AbstractFloat, C, D, TDA, LLW, LLWC, LSW, LSWC, PS, GP, SLW, SSW}
+struct radiation_clima_data_helper{FT<:AbstractFloat, C, D, TDA, LLW, LLWC, LSW, LSWC, PS, GP, SLW, SSW, ALI}
     context::C
     device::D
     DA::TDA
@@ -76,6 +74,7 @@ struct radiation_clima_data_helper{FT<:AbstractFloat, C, D, TDA, LLW, LLWC, LSW,
     lon::Union{FT,Nothing}
     slv_lw::SLW
     slv_sw::SSW
+    absliq_r_interp::ALI
 
     function radiation_clima_data_helper(nz::Int, FT::Type{<:AbstractFloat})
         nlay = nz + 10
@@ -114,36 +113,33 @@ struct radiation_clima_data_helper{FT<:AbstractFloat, C, D, TDA, LLW, LLWC, LSW,
             slv_lw0.fluxb, slv_lw0.flux, band_flux_lw, slv_lw0.state_cache,
         )
 
+        R_array = range(lookup_lw_cld.bounds[1], lookup_lw_cld.bounds[2],
+                        length=lookup_lw_cld.dims[3])  # μm
+        absliq_r_interp = ntuple(nband_lw) do ibnd
+            ext, ssa, _ = LookUpTables.getview_liqdata(lookup_lw_cld, ibnd)
+            absliq = collect(ext .* (1 .- ssa))
+            linear_interpolation(R_array, absliq, extrapolation_bc=Flat())
+        end
+
         return new{
             FT, typeof(context), typeof(device), typeof(DA),
             typeof(lookup_lw), typeof(lookup_lw_cld), typeof(lookup_sw), typeof(lookup_sw_cld),
-            typeof(param_set), typeof(grid_params), typeof(slv_lw), typeof(slv_sw),
+            typeof(param_set), typeof(grid_params), typeof(slv_lw), typeof(slv_sw), typeof(absliq_r_interp),
         }(context,device,DA,nlay, nlev, ncol, ngas, nband_lw, nband_sw, lookup_lw, lookup_lw_cld, lookup_sw,
         lookup_sw_cld, idx_gases, idx_gases["h2o"],
-        param_set, grid_params, lat, lon, slv_lw, slv_sw)
+        param_set, grid_params, lat, lon, slv_lw, slv_sw, absliq_r_interp)
     end
 end
 
 
-struct radiation_data{FT<:AbstractFloat, AS, CR}
-    flux_up_lw::Array{FT,2}
-    flux_dn_lw::Array{FT,2}
-    flux_up_sw::Array{FT,2}
-    flux_dn_sw::Array{FT,2}
-    flux_net::Array{FT,2}
-    layerdata::Array{FT, 2}
-    metric_scaling::Array{FT, 2}
-    flux_up_arr::Array{FT, 2}
-    flux_dn_arr::Array{FT, 2}
-    hr_lay::Array{FT, 2}
-    atmospheric_state::AS
-    flux_net_droplet::Matrix{FT}
-    cloud_heating_delta::Vector{FT}
-    cond_rad_term::Vector{FT}
-    CArad::CR
-
-
-    function radiation_data(::Type{FT},nsd,grid,constants) where FT<:AbstractFloat
+# `radiation_data{FT,AS,CR}` itself is defined in the package (src/SDfunc/SCM/scm_types.jl,
+# generic in AS/CR so that definition has no RRTMGP dependency) alongside a placeholder
+# constructor `radiation_data(::Type{FT}, nsd, nz; CArad=nothing)` that `scm_data` uses by
+# default. This is the constructor that actually loads RRTMGP's lookup tables and builds
+# CArad/AS, so it's kept here (only exists once a driver script includes this file) and
+# extends `Droplets.radiation_data` with a 4-positional-arg method, so it dispatches
+# separately
+function Droplets.radiation_data(::Type{FT},nsd,grid,constants) where FT<:AbstractFloat
         CArad = radiation_clima_data_helper(grid.nz, FT)
         nlay= CArad.nlay
         nlev = CArad.nlev
@@ -196,16 +192,12 @@ struct radiation_data{FT<:AbstractFloat, AS, CR}
         cond_rad_term = zeros(FT, nsd)
         
 
-        return new{FT, typeof(as), typeof(CArad)}(zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),
+        return Droplets.radiation_data{FT, typeof(as), typeof(CArad)}(zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),zeros(levdim...),
         layerdata, metric_scaling,
         zeros(FT,nlev,n_bnd),zeros(FT,nlev,n_bnd), zeros(laydim...), as,
         zeros(FT, Nz, n_bnd), cloud_heating_delta, cond_rad_term, CArad)
-
-        
-    end 
 end
 
-Base.broadcastable(x::radiation_data) = Ref(x)
 Base.broadcastable(x::radiation_clima_data_helper)= Ref(x)
 
 function fill_full_atmosphere(grid::scm_eulerian_arrays,as::AtmosphericState,constants::Constants,CArad::radiation_clima_data_helper)::Nothing
@@ -239,10 +231,6 @@ function fill_liquid_water_diagnostics(grid::scm_eulerian_arrays{FT}, diagnostic
     return nothing
 end
 
-# Function barrier for the ibnd/glay loop in compute_radiative_fluxes!: `planck` and
-# `mask_lw` arrive from callers holding them as abstractly-typed fields (see the note
-# at the call site below), so this function's own parameters get freshly specialized
-# on their actual concrete runtime types instead of inheriting that instability.
 function compute_flux_net_droplet!(raddata, planck, mask_lw, t_lay, n_bnd::Int, nz::Int)
     t_planck = planck.t_planck
     tot_planck = planck.tot_planck

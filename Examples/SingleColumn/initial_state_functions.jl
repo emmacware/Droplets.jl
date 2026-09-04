@@ -2,8 +2,29 @@ using Droplets
 using Plots
 
 
-function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,init_dist,coagsettings,spatialsettings,condensationsettings,tkesettings,constants;
-        deterministic_multiplicity::Bool=false, constant_qvap_hydrostatic::Bool=false, hydrostatic_pysdm::Bool=false)
+"""
+    initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w, init_dist, scmsettings, constants;
+        deterministic_multiplicity=false, constant_qvap_hydrostatic=false, hydrostatic_pysdm=false,
+        build_raddata=nothing)
+
+Build the grid/droplet environment, then `scm_data` (coagdata/conddata/mpdatatmp/turbdata,
+plus `raddata`) from `scmsettings`. `build_raddata`, if given, is called as
+`build_raddata(FT, length(droplets.X), grid, constants)` to build a case-specific `raddata`
+(e.g. `radiation_data` from the Examples radiation driver, RRTMGP-backed) — leave it as
+`nothing` for cases that never turn radiation on, and `scm_data` falls back to its own
+RRTMGP-free placeholder.
+
+Returns `(grid, droplets, scmdata)`.
+"""
+function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w, init_dist, scmsettings::scm_settings{FT}, constants;
+        deterministic_multiplicity::Bool=false, constant_qvap_hydrostatic::Bool=false, hydrostatic_pysdm::Bool=false,
+        build_raddata = nothing) where {FT<:AbstractFloat}
+    coagsettings = scmsettings.coagsettings
+    spatialsettings = scmsettings.spatial
+    condensationsettings = scmsettings.condsettings
+    tkesettings = scmsettings.tkesettings
+    diagnosticsettings = scmsettings.diagnosticsettings
+
     z_centers = [(k - 0.5) * dz for k in 1:nz]
     qv_profile = qt.(z_centers)
     droplets = init_droplets_scm(init_dist, coagsettings, spatialsettings, qv_profile;
@@ -64,7 +85,6 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
     grid.wind.w .= prescribed_w.(grid.faces_z)
 
         #set to eq radius, rescale multiplicities from STP to actual density
-    FT = eltype(grid.states.P)
     ρ_STP = FT(101325 / (constants.Rd * (273.15)))
     for k in range(1,nz)
         drop_idx = findall(i -> droplets.cell_id[i] == k, 1:length(droplets.X))
@@ -83,81 +103,11 @@ function initialize_scm_environment(nz, dz, P_surface, θl, qt, prescribed_w,ini
         
     end
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
-    coagdata = coagulation_run_spatial{FT}(nz, coagsettings.Ns,droplets)
-    # condensation_integrator = create_condensation_integrator(grid, droplets, condensationsettings, coagsettings, spatialsettings,constants)
-    conddata = condensation_data(FT,nz,coagsettings.Ns)
-    raddata = radiation_data(FT,length(droplets.X),grid,constants)
-    mpdatatmp = mpdata_tmp_1d(grid.states.qv, grid.faces_z)
-    turbdata = turbulence_data(FT, nz)
-    return grid,droplets,coagdata,conddata,raddata,mpdatatmp,turbdata
-end
 
-"""
-run_scm
+    scmdata = build_raddata === nothing ? scm_data(grid, droplets, scmsettings) :
+        scm_data(grid, droplets, scmsettings; raddata = build_raddata(FT, length(droplets.X), grid, constants))
 
-    Build a single-column-model environment (via `initialize_scm_environment`) and
-    advance it from t=0 to `t_max`, running `scmspinupsettings` for the spin-up window
-    (`scmsettings.spinup_time`) and `scmsettings` afterward. Shared by the DyCOMS and
-    Kid1d driver scripts. Returns the full `grid` (with populated `grid.output`), or
-    `(grid, droplets_snapshots)` if `snapshot_every` is given.
-
-    `step_forcing!(grid, droplets, i, dt)` runs at the top of every step and must return
-    the `prescribed_w` function to hand to `single_column_timestep` for that step; use it
-    to mutate `grid.wind.w` and rebuild `prescribed_w` for time-varying wind forcing (e.g.
-    Kid1d's kinematic updraft). Defaults to always returning the initial `prescribed_w`.
-
-    `post_init!(grid, droplets)` runs once after environment initialization, before the
-    time loop, for case-specific tweaks (e.g. seeding initial TKE).
-"""
-function run_scm(nz, dz, P_surface, θ, qt, prescribed_w, init_dist,
-        coagsettings, spatialsettings, condensationsettings, tkesettings, constants,
-        mpdatasettings, diagnosticsettings, scmsettings;
-        scmspinupsettings = scmsettings,
-        deterministic_multiplicity::Bool=false, constant_qvap_hydrostatic::Bool=false, hydrostatic_pysdm::Bool=false,
-        step_forcing!::Function = (grid, droplets, i, dt) -> prescribed_w,
-        post_init!::Function = (grid, droplets) -> nothing,
-        verbose_every = 100,
-        snapshot_every = nothing,
-        dt = spatialsettings.dt, t_max = spatialsettings.t_max)
-
-    grid, droplets, coagdata, conddata, raddata, mpdatatmp, turbdata = initialize_scm_environment(
-        nz, dz, P_surface, θ, qt, prescribed_w, init_dist,
-        coagsettings, spatialsettings, condensationsettings, tkesettings, constants;
-        deterministic_multiplicity, constant_qvap_hydrostatic, hydrostatic_pysdm)
-
-    post_init!(grid, droplets)
-
-    CArad = raddata.CArad
-    R_array = range(CArad.lookup_lw_cld.bounds[1], CArad.lookup_lw_cld.bounds[2],
-                    length=CArad.lookup_lw_cld.dims[3])  # μm
-    absliq_r_interp = ntuple(CArad.nband_lw) do ibnd
-        ext, ssa, _ = LookUpTables.getview_liqdata(CArad.lookup_lw_cld, ibnd)
-        absliq = collect(ext .* (1 .- ssa))
-        linear_interpolation(R_array, absliq, extrapolation_bc=Flat())
-    end
-
-    spinup_step = round(Int, scmsettings.spinup_time / dt)
-    n_steps = Int(t_max / dt)
-
-    droplets_snapshots = snapshot_every === nothing ? nothing : Dict{Int, droplet_attributes}()
-
-    for i in 1:n_steps
-        if verbose_every !== nothing && i*dt % verbose_every == 0
-            println("Timestep: ", i*dt)
-        end
-        if snapshot_every !== nothing && i*dt % snapshot_every == 0
-            droplets_snapshots[Int(div(i*dt, snapshot_every))] = deepcopy(droplets)
-        end
-
-        w_i = step_forcing!(grid, droplets, i, dt)
-        settings_i = i <= spinup_step ? scmspinupsettings : scmsettings
-
-        single_column_timestep(grid, dt, droplets, coagsettings, spatialsettings, condensationsettings,
-            coagdata, conddata, raddata, turbdata, diagnosticsettings, w_i, mpdatatmp, mpdatasettings,
-            constants, settings_i, tkesettings, absliq_r_interp, i)
-    end
-
-    return snapshot_every === nothing ? grid : (grid, droplets_snapshots)
+    return grid, droplets, scmdata
 end
 
 

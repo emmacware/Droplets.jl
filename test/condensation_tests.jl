@@ -370,7 +370,7 @@ end
 
     condensation_time_step_spatial!(
         DynON(), droplets, state, nz, FT(1.0),
-        conddata, cst, condsettings, spatial, nothing, scmsettings, nothing, FT(0.0),
+        conddata, cst, condsettings, spatial, nothing, scmsettings, FT(0.0),
     )
 
     # Supersaturated → droplets grow
@@ -397,7 +397,7 @@ end
     X2_before = copy(droplets2.X)
     condensation_time_step_spatial!(
         DynOFF(), droplets2, state, nz, FT(1.0),
-        conddata, cst, condsettings, spatial, nothing, scmsettings, nothing, FT(0.0),
+        conddata, cst, condsettings, spatial, nothing, scmsettings, FT(0.0),
     )
     @test droplets2.X == X2_before
 
@@ -419,7 +419,7 @@ end
     X3_before = copy(droplets3.X)
     condensation_time_step_spatial!(
         DynON(), droplets3, state3, nz, FT(1.0),
-        conddata3, cst, condsettings, spatial, nothing, scmsettings, nothing, FT(0.0),
+        conddata3, cst, condsettings, spatial, nothing, scmsettings, FT(0.0),
     )
     @test all(droplets3.X .< X3_before)
     @test all(state3.qv .> qv_sub)   # qv increases as droplets evaporate

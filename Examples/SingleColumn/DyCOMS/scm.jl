@@ -1,5 +1,6 @@
 using Revise
 using Droplets
+using Distributions
 # using DifferentialEquations
 
 using OrdinaryDiffEq
@@ -24,7 +25,7 @@ const nz = Int(Z_max/dz)
 const dt = 1.0 #s
 const dt_coag = 0.1
 const dt_cond = 0.1
-const dt_rad = 1.0 #s, radiative transfer (RTE) call cadence; heating rate is still applied every dt
+const dt_rad = 1.0 #s,
 const Ns_per_grid = 64
 seed = 42
 Random.seed!(seed)
@@ -69,7 +70,7 @@ dist = MixtureModel(LogNormal, [(log(m1), σ1), (log(m2), σ2)], [n1/n0, n2/n0])
 
 #Settings Structs
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=1.0,
-    # weighted_droplet_allocation = false, # uniform Ns/nz per cell instead of qv-weighted seeding
+    weighted_droplet_allocation = true, # uniform Ns/nz per cell instead of qv-weighted seeding
 )
 
 coagsettings = coag_settings{FT}(Ns=Ns_per_grid*nz,ΔV=dz*spatialsettings.area_per_grid, n0=n0,Δt=dt_coag,kernel=hydrodynamic,hydrodynamic_collision_eff_func=true)
@@ -84,58 +85,66 @@ tkesettings = tke_settings{FT}(u_star=u_star, geostrophic_u=geostrophic_u, geost
     LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux,
     mixing_length_scheme = BottMixing(), # or DeardorffMixing(); default EDMFXMixing()
     average_e_l_3pt = true, # use e[z] (and l[z]) alone in droplet diffusion instead of averaging [z-1,z,z+1]
-    droplet_diffusion_length_dz = false, # use the diagnosed mixing length l[z] instead of dz in droplet diffusion
-    density_weighted_diffusion = false, # mass-weight implicit_diffuse! (ρK face diffusivity) instead of plain ∂/∂z(K∂ϕ/∂z)
+    # droplet_diffusion_length_dz = true, # use the diagnosed mixing length l[z] instead of dz in droplet diffusion
+    # density_weighted_diffusion = false, # mass-weight implicit_diffuse! (ρK face diffusivity) instead of plain ∂/∂z(K∂ϕ/∂z)
 )
 
+diagnosticsettings = diagnostic_settings{FT}()
+
 #Default dynamics are all on
-base_scm = (
-    Δt                          = dt,
+base_dynamics = (
     turbulence                  = DynON(),
     motion                      = DynON(),
     advection                   = DynON(),
-    radiation                  = DynON(),
+    radiation                   = DynON(),
     condensation                = DynON(),
-    n_cond                      = round(Int, dt / dt_cond),
-    n_coag                      = round(Int, dt / dt_coag),
-    # n_rad                       = round(Int, dt_rad / dt),
-    spinup_time                 = 3600.0,
     turbulent_droplet_diffusion_on = DynON(),
     # droplet_diffusion_scheme    = WellMixedDropletDiffusion(), # has the well-mixed drift correction + no qv-threshold inversion wall (see nonlocal.jl); or OUDropletDiffusion() (no drift correction, has the wall), WeilDropletDiffusion(), VisserDropletDiffusion(), NoDropletDiffusion()
     keep_grid_filled            = DynON(), # disable donor-cell SD reseeding of thin layers
-    coag_threading                = Parallel(), # or Serial() for single-threaded
 )
 
-scmspinupsettings = scm_settings{FT}(; base_scm...,
-REM              = DynOFF(),
-settling         = DynOFF(),
-spinupsaturation = DynON(),
-coalescence       = DynOFF(),
-n_rad             = round(Int, dt / dt),
-
-# turbulent_droplet_diffusion_on = DynON(),
+dyn_spinup = dynamic_settings(; base_dynamics...,
+    settling         = DynOFF(),
+    spinupsaturation = DynON(),
+    coalescence       = DynOFF(),
 )
 
-scmsettings = scm_settings{FT}(; base_scm...,
-REM              = DynOFF(),
-settling         = DynON(),
-spinupsaturation = DynOFF(),
-coalescence       = DynON(),
-n_rad             = round(Int, dt_rad / dt),
+dyn_main = dynamic_settings(; base_dynamics...,
+    settling         = DynON(),
+    spinupsaturation = DynOFF(),
+    coalescence       = DynON(),
 )
 
-diagnosticsettings = diagnostic_settings()
+base_settings = (
+    spatial            = spatialsettings,
+    coagsettings       = coagsettings,
+    condsettings       = condensationsettings,
+    tkesettings        = tkesettings,
+    mpdatasettings     = mpdatasettings,
+    diagnosticsettings = diagnosticsettings,
+    Δt                 = dt,
+    n_cond             = round(Int, dt / dt_cond),
+    n_coag             = round(Int, dt / dt_coag),
+    spinup_time        = 3600.0,
+    coag_threading     = Parallel(), # or Serial() for single-threaded
+)
+
+scmspinupsettings = scm_settings{FT}(; base_settings..., dynamics = dyn_spinup, n_rad = round(Int, dt / dt))
+scmsettings        = scm_settings{FT}(; base_settings..., dynamics = dyn_main, n_rad = round(Int, dt_rad / dt))
 
 
 
-# Build environment and run spin-up + main simulation
-grid, droplets_snapshots = run_scm(nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
-    coagsettings, spatialsettings, condensationsettings, tkesettings, constants,
-    mpdatasettings, diagnosticsettings, scmsettings;
+# Build environment and droplets
+scmgrid, droplets, scmdata = initialize_scm_environment(nz, dz, P_surface, θl_initial, qt_initial, prescribed_w, dist,
+    scmsettings, constants;
+    build_raddata = radiation_data)
+
+#initialize with some turbulence
+scmgrid.states.e .= 0.1
+
+run_scm!(scmgrid, droplets, scmdata, constants, scmsettings, prescribed_w;
     scmspinupsettings = scmspinupsettings,
-    deterministic_multiplicity = true,
-    snapshot_every = 600,
     )
 
 
-ptime = plot!(plot_output_timeseries(grid),plot_title="Droplets.jl DyCOMS")
+ptime = plot!(plot_output_timeseries(scmgrid),plot_title="Droplets.jl DyCOMS")

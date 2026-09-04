@@ -129,7 +129,7 @@ end
 
 """
     dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, c::FT, radcoeff::FT, constants::Constants{FT},
-    raddata::Rad,absliq_r_interp::Abs,timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Abs, Rad}
+    raddata::Rad,timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Rad}
 
     Update the volume of a droplet using the Köhler equation with kappa parameterization and bisection method (Arabas and Shima 2017) using square radius.
 
@@ -139,8 +139,7 @@ end
 """
 function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, c::FT, radcoeff::FT, constants::Constants{FT},
     raddata::Rad,
-    absliq_r_interp::Abs,
-    timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Abs,Rad}
+    timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Rad}
     R      = volume_to_radius(droplets.X[i])
     dry_r3 = droplets.dry_r3[i]
     dry_r  = cbrt(dry_r3)
@@ -196,8 +195,8 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
 
         if depth < max_depth
             half = timestep * FT(0.5)
-            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, absliq_r_interp, half, iters, depth + 1, max_depth)
-            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, absliq_r_interp, half, iters, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, half, iters, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, half, iters, depth + 1, max_depth)
             return
         end
         r_new = max(r_new, dry_r)
@@ -225,12 +224,13 @@ function dXkappakohler_bisection(REM::DynOFF, droplets::droplet_attributes{FT}, 
 end
 
 
-function calc_cond_rad_term(R::FT,z::Int,constants::Constants{FT},raddata::Rad,absliq_r_interp::Abs) where {FT,Rad,Abs}
+function calc_cond_rad_term(R::FT,z::Int,constants::Constants{FT},raddata::Rad) where {FT,Rad}
     if R < 2.5e-6 || R > 4e-5
         return 0.0
     end
     abs_fn = 0.0
     n_bnd = raddata.CArad.nband_lw
+    absliq_r_interp = raddata.CArad.absliq_r_interp
     # tot_wn = 0.0
     tot_flux = 0.0
 
@@ -255,8 +255,7 @@ end
 
 function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i::Int, kappa::FT, T::FT, Senv::FT, c::FT, radcoeff::FT, constants::Constants{FT},
     raddata::Rad,
-    absliq_r_interp::Abs,
-    timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Abs,Rad}
+    timestep::FT, iters::Int, depth::Int=0, max_depth::Int=6) where {FT, Rad}
 
     depth == 0 && (raddata.cond_rad_term[i] = zero(FT))
 
@@ -273,7 +272,7 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     r_crit = sqrt(3 * b / A)
     Scrit  = one(FT) + sqrt(4 * A^3 / (27 * b))
     if Senv > Scrit
-        rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
+        rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata)
         Fcond0 = c * S1
         F0 = Fcond0 + rad0
         r_new = sqrt(max(R2 + FT(2) * F0 * timestep, dry_r * dry_r))
@@ -287,7 +286,7 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         return
     end
 
-    rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata, absliq_r_interp)
+    rad0 = radcoeff*calc_cond_rad_term(R, z,constants, raddata)
     Fcond0   = c * (S1 + (b - A * R2) / (R2 * R))
     F0 = Fcond0 + rad0
 
@@ -297,7 +296,7 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
         lo_r < r_crit && (hi_r = min(hi_r, r_crit))
     else
         g_dry = dry_r * dry_r - R2 - timestep * (c * (S1 - A / dry_r + kappa) +
-                radcoeff*calc_cond_rad_term(dry_r, z, constants, raddata, absliq_r_interp))
+                radcoeff*calc_cond_rad_term(dry_r, z, constants, raddata))
         g_R   = -timestep * F0
         if g_dry * g_R >= 0
             X_new = FT(4π/3) * dry_r^3
@@ -312,16 +311,16 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     end
 
     lo2  = lo_r * lo_r;  lo3 = lo2 * lo_r
-    g_lo = lo2 - R2 - timestep * (c * (S1 + (b - A * lo2) / lo3) + radcoeff*calc_cond_rad_term(lo_r, z,constants, raddata, absliq_r_interp))
+    g_lo = lo2 - R2 - timestep * (c * (S1 + (b - A * lo2) / lo3) + radcoeff*calc_cond_rad_term(lo_r, z,constants, raddata))
     hi2  = hi_r * hi_r;  hi3 = hi2 * hi_r
-    g_hi = hi2 - R2 - timestep * (c * (S1 + (b - A * hi2) / hi3) + radcoeff*calc_cond_rad_term(hi_r, z, constants, raddata, absliq_r_interp))
+    g_hi = hi2 - R2 - timestep * (c * (S1 + (b - A * hi2) / hi3) + radcoeff*calc_cond_rad_term(hi_r, z, constants, raddata))
     r2_new = (lo2 + hi2) * FT(0.5)
 
     if g_lo * g_hi >= 0
         if depth < max_depth
             half = timestep * FT(0.5)
-            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, absliq_r_interp, half, iters, depth + 1, max_depth)
-            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, absliq_r_interp, half, iters, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, half, iters, depth + 1, max_depth)
+            dXkappakohler_bisection(REM, droplets, i, kappa, T, Senv, c, radcoeff, constants, raddata, half, iters, depth + 1, max_depth)
             return
         end
         r_new  = max(sqrt(r2_new), dry_r)
@@ -338,7 +337,7 @@ function dXkappakohler_bisection(REM::DynON, droplets::droplet_attributes{FT}, i
     for _ in 1:iters
         r_1 = sqrt(r2_new)
         r3    = r2_new * r_1
-        rad_new = radcoeff * calc_cond_rad_term(r_1, z,constants, raddata, absliq_r_interp)
+        rad_new = radcoeff * calc_cond_rad_term(r_1, z,constants, raddata)
         g_mid = r2_new - R2 - timestep * (c * (S1 + (b - A * r2_new) / r3) + rad_new)
         if g_lo * g_mid <= 0
             hi2 = r2_new;  g_hi = g_mid
@@ -717,19 +716,19 @@ end
 # end
 
 """
-    limitsat(scmsettings.spinupsaturation, S)
+    limitsat(dynamics.spinupsaturation, S)
     Limit the supersaturation to 1%, used for spinup
 """
 limitsat(::DynON, S) = min(S, 1.01)
 limitsat(::DynOFF, S) = S
 
 """
-    apply_thermo_feedback!(scmsettings.thermo_feedback, state, z, dqv, constants)
+    apply_thermo_feedback!(dynamics.thermo_feedback, state, z, dqv, constants)
     Apply thermodynamic feedback to the state variables based on condensation/evaporation.
     Turned off for prescribed thermodynamics (such as KiD)
 
     # Arguments
-    - `scmsettings.thermo_feedback`: A flag indicating whether to apply thermodynamic feedback.
+    - `dynamics.thermo_feedback`: A flag indicating whether to apply thermodynamic feedback.
     - `state`: The current state of the system, containing temperature, pressure, and mixing ratios.
     - `z`: The index of the grid cell being updated.
     - `dqv`: The change in water vapor mixing ratio due to condensation/evaporation.
@@ -745,12 +744,12 @@ function apply_thermo_feedback!(::DynON, state, z, dqv, constants)
 end
 apply_thermo_feedback!(::DynOFF, state, z, dqv, constants) = nothing
 function condensation_time_step_spatial!(::DynOFF,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
-    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,dynamics::dynamic_settings, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
 end
 
 """
     condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
-    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,dynamics::dynamic_settings, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
     Calculate the condensation time step for each droplet in the simulation.
 
     # Arguments
@@ -762,9 +761,8 @@ end
     - `constants`: Physical constants used in calculations.
     - `condsettings`: Settings related to condensation processes.
     - `spatialsettings`: Settings related to spatial discretization.
-    - `raddata`: A structure containing radiation-related data.
-    - `scmsettings`: Settings for the single-column model (SCM).
-    - `absliq_r_interp`: Interpolation function for liquid absorption properties.
+    - `raddata`: A structure containing radiation-related data (its `CArad.absliq_r_interp` field supplies the per-band liquid absorption interpolants).
+    - `dynamics`: On/off flags for the SCM's dynamics (spin-up saturation limiting, thermo feedback, REM, ...).
     - `m_t`: Mass of the droplet.
 
     # Returns
@@ -772,7 +770,7 @@ end
 """
 
 function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT}, state::states, nz::Int, Δtg::FT, conddata::cdat, constants::Constants{FT},
-    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,scmsettings::scm_settings{FT},absliq_r_interp, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
+    condsettings::condensation_settings{FT}, spatialsettings::spatial_settings{FT}, raddata::Rad,dynamics::dynamic_settings, m_t::FT) where {FT<:AbstractFloat,Rad,states,cdat}
     # Calculate condensation time step for each droplet
     # Ns = spatialsettings.Nz
     # FT = eltype(droplets.X)
@@ -781,7 +779,7 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
     for z in 1:nz
         isempty(droplets.grid_range[z]) && continue
         T_k = state.T_tmp[z]
-        conddata.S_env_cell[z] = limitsat(scmsettings.spinupsaturation, sat(state.qv[z], state.P[z]) / esat(T_k))
+        conddata.S_env_cell[z] = limitsat(dynamics.spinupsaturation, sat(state.qv[z], state.P[z]) / esat(T_k))
         fk = FK(T_k, constants)
         fd = FD(T_k, constants)
         conddata.c_cell[z] = FT(2) / (fk + fd)
@@ -805,7 +803,7 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
             c        = conddata.c_cell[z]
             radcoeff = conddata.radcoeff_cell[z]
             X_before = droplets.X[idrop]
-            dXkappakohler_bisection(scmsettings.REM, droplets, idrop, condsettings.kappa, T_k, S_env, c, radcoeff, constants, raddata, absliq_r_interp, Δtg, 20)
+            dXkappakohler_bisection(dynamics.REM, droplets, idrop, condsettings.kappa, T_k, S_env, c, radcoeff, constants, raddata, Δtg, 20)
             conddata.droplet_vol_change[idrop] = (droplets.X[idrop] - X_before) * droplets.ξ[idrop]
         end
     end
@@ -823,9 +821,9 @@ function condensation_time_step_spatial!(::DynON,droplets::droplet_attributes{FT
         dqv = -ΔVdrop * inv_vol
         conddata.condensation_src[z] -= dqv
         state.qv[z] += dqv
-        apply_thermo_feedback!(scmsettings.thermo_feedback, state, z, dqv, constants)
+        apply_thermo_feedback!(dynamics.thermo_feedback, state, z, dqv, constants)
 
-        if scmsettings.REM == DynON()
+        if dynamics.REM == DynON()
             conddata.condensation_rad_net[z] += inv_vol * sum(i -> raddata.cond_rad_term[i] * droplets.ξ[i], k)
             conddata.condensation_rad_abs[z] += inv_vol * sum(i -> abs(raddata.cond_rad_term[i]) * droplets.ξ[i], k)
         end
