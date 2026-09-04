@@ -1,27 +1,41 @@
-#check all functions for halo logic
-#mpdata boundary condition?
-#check top cell doesn't change, add MPDATA boundary condition
+export single_column_timestep, update_theta!, update_density!, recycle_precipitation!, recycle_top_escape!, fill_grid_ranges!, keep_layer_filled!, radiation_function!
 
-# condensation rate, radiation term condensation rate
-# collision rates, radiative cooling rates,
-# advection, diffusion,
+"""
+radiation_function!
+    Dispatches on the `radiation` dynamics flag to compute (or skip) radiative fluxes/heating
+    for one timestep. The `DynOFF` no-op lives here since it needs no radiation-package
+    dependency; the `DynON` method (RRTMGP-backed) is defined as `Droplets.radiation_function!`
+    in the Examples radiation driver, so RRTMGP stays out of this package's dependencies.
+"""
+function radiation_function!(::DynOFF, grid::scm_eulerian_arrays{FT}, spatialsettings::spatial_settings{FT},
+    diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT}, raddata, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
+    return nothing
+end
 
+"""
+single_column_timestep
+
+    Advance the SCM by one timestep, including condensation, coalescence, turbulence, advection, and diagnostics,
+    if processes are turned on by scmsettings.
+
+"""
 function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets::droplet_attributes{FT},
-        coagsettings::coag_settings{FT}, spatialsettings::spatial_settings{FT},
-        condensationsettings::condensation_settings{FT}, coagdata::coagulation_run_spatial,
-        conddata::condensation_data{FT}, raddata::radiation_data{FT},turbdata::turbulence_data{FT},
-        diagnosticsettings::diagnostic_settings{FT},
-        prescribed_w::Function, mpdatatmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
-        constants::Constants{FT},
-        scmsettings::scm_settings{FT},
-        tkesettings::tke_settings{FT},
-        absliq_r_interp,
-        i::Int
+    coagsettings::coag_settings{FT}, spatialsettings::spatial_settings{FT},
+    condensationsettings::condensation_settings{FT}, coagdata::coagulation_run_spatial,
+    conddata::condensation_data{FT}, raddata::rad,turbdata::turbulence_data{FT},
+    diagnosticsettings::diagnostic_settings{FT},
+    prescribed_w::Function, mpdatatmp::mpdata_tmp_1d, mpdatasettings::mpdata_settings_1d,
+    constants::Constants{FT},
+    scmsettings::scm_settings{FT},
+    tkesettings::tke_settings{FT},
+    absliq_r_interp,
+    i::Int
 
-    ) where {FT<:AbstractFloat}
+) where {FT<:AbstractFloat, rad}
+    nz = spatialsettings.Nz
     output_idx = Int(floor(i*dt/spatialsettings.dt_output) +1)
     n_output = spatialsettings.dt_output / dt
-    
+
     #316.708 μs (0 allocations: 0 bytes)
     sd_fill_diagnostics(droplets, grid, spatialsettings, diagnosticsettings)
     # or i = 1
@@ -56,17 +70,12 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     # Environmental advection
     #  160.250 μs (1799 allocations: 779.50 KiB)
     turb_timestep!(scmsettings.turbulence,grid, tkesettings, constants, dt, scmsettings, turbdata)
-    # compute_ql_at_cell!.(grid.states, 1:nz,constants)
-    # qt = grid.states.qv .+ grid.states.ql_tmp
-    # θ_l = θl.(grid.states.P, grid.states.T_tmp, grid.states.ql_tmp, grid.states.qv, constants)
+
     #(32.916 μs (2 allocations: 1.06 KiB)
     compute_ql_all_cells!(grid.states, constants)
     if tkesettings.thermo_variable isa ThetalQtVar
         # turbulent diffusion above ran on θl_tmp/qt_tmp (see diffuse_fields! in tke.jl);
-        # reconstruct θ/qv from the diffused pair + the freshly recomputed ql. When
-        # ThetaQvVar is selected instead, diffuse_fields! already updated θ/qv directly,
-        # so this reconstruction is skipped (it would otherwise overwrite them with the
-        # stale pre-turbulence θl_tmp/qt_tmp values from above).
+        # reconstruct θ/qv from the diffused pair + the freshly recomputed ql
         grid.states.qv .= grid.states.qt_tmp .- grid.states.ql_tmp
         grid.states.θ .= θ_from_θl.(grid.states.P, grid.states.θl_tmp, grid.states.ql_tmp, grid.states.qv, constants)
     end
@@ -79,38 +88,44 @@ function single_column_timestep(grid::scm_eulerian_arrays{FT}, dt::FT, droplets:
     mpdata_scm!(scmsettings.advection, scmsettings.thermo_feedback, grid, dt, mpdatatmp, mpdatasettings, constants)
     # 197.083 μs (16 allocations: 704 bytes)
     update_droplet_positions!(scmsettings.motion,scmsettings.advection,scmsettings.settling,droplets, prescribed_w, dt, spatialsettings, scmsettings, i)
-    
+
 
     #(28.000 μs (49 allocations: 928 bytes))
     recycle_precipitation!(scmsettings.recycling,droplets, grid, spatialsettings, diagnosticsettings,coagdata, constants, output_idx)
-    recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings)
+    recycle_top_escape!(scmsettings.top_escape, droplets, spatialsettings, grid, constants)
     #18.833 μs (53 allocations: 1.03 KiB)
     keep_layer_filled!(scmsettings.keep_grid_filled, droplets, grid, spatialsettings, diagnosticsettings, constants, min_count = Int(floor(1.3 * coagsettings.Ns/spatialsettings.Nz)))
     #  12.916 μs (0 allocations: 0 bytes)
     fill_grid_ranges!(droplets)
 
-    return nothing
+return nothing
 end
+
 
 
 update_theta!(::DynON, grid, constants) = nothing
 update_theta!(::DynOFF, grid, constants) = nothing
 
 update_density!(::DynON, grid, constants) =
-    ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
+ρ_calc_θ!(grid.states.ρ,grid.states.P,grid.states.θ,grid.states.qv,constants)
 
 # KiD: ρ_dry/P_dry were captured once at init and never touched;
 # total ρ/P are re-diagnosed from the currently evolving
 # qv (calc_ρ_from_ρ_dry / calc_P_from_P_dry)
 function update_density!(::DynOFF, grid, constants)
-    states = grid.states
-    states.ρ .= calc_ρ_from_ρ_dry.(states.ρ_dry, states.qv)
-    states.P .= calc_P_from_P_dry.(states.P_dry, states.qv, Ref(constants))
-    return nothing
+states = grid.states
+states.ρ .= calc_ρ_from_ρ_dry.(states.ρ_dry, states.qv)
+states.P .= calc_P_from_P_dry.(states.P_dry, states.qv, Ref(constants))
+return nothing
 end
 
+"""
+recycle_precipitation
+    Recycle precipitating droplets (X > diagnosticsettings.cloud_rain_cuttoff) that have fallen below the bottom of the grid
+    back to the top of the grid, and add their mass to the surface precipitation diagnostic.
+"""
 function recycle_precipitation!(::DynOFF,droplets, grid, spatialsettings, diagnosticsettings, coagdata,
-    constants,output_step)
+constants,output_step)
 end
 
 function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagnosticsettings, coagdata, constants, output_step)
@@ -128,7 +143,7 @@ function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagno
     idx_400m   = raw_400 === nothing ? 1 : raw_400
     cloud_cells = filter(k -> !isempty(droplets.grid_range[k]), idx_400m:z_inv_idx)
     recycle_idx = isempty(cloud_cells) ? z_inv_idx :
-                  argmin(k -> length(droplets.grid_range[k]), cloud_cells)
+                argmin(k -> length(droplets.grid_range[k]), cloud_cells)
 
     for k in droplets.I
         droplets.z_loc[k] > 0 && droplets.ξ[k] > 0 && continue
@@ -155,10 +170,14 @@ function recycle_precipitation!(::DynON, droplets, grid, spatialsettings, diagno
     return
 end
 
-function recycle_top_escape!(::DynOFF, droplets, spatialsettings)
+function recycle_top_escape!(::DynOFF, droplets, spatialsettings, grid, constants)
 end
-
-function recycle_top_escape!(::DynON, droplets, spatialsettings)
+"""
+recycle_top_escape
+    Recycle droplets that have escaped the top of the grid back to the bottom of the grid.
+    Setup for KiD
+"""
+function recycle_top_escape!(::DynON, droplets, spatialsettings, grid, constants)
     FT = eltype(droplets.X)
     Z_max = spatialsettings.Z_max
     T = T_from_theta(grid.states.θ[1], grid.states.P[1],grid.states.qv[1], constants)
@@ -179,6 +198,11 @@ function recycle_top_escape!(::DynON, droplets, spatialsettings)
     return
 end
 
+"""
+fill_grid_ranges!
+    Fill the grid_range vector of UnitRanges for each grid cell, based on the current droplets.I and droplets.cell_id.
+    This is used to efficiently access the droplets in each grid cell without having to filter the entire droplets.I array.
+"""
 function fill_grid_ranges!(droplets)
     sort!(droplets.I, by = k -> droplets.cell_id[k])
 
@@ -200,6 +224,14 @@ end
 
 function keep_layer_filled!(::DynOFF, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 100)
 end
+"""
+keep_layer_filled!
+    Ensure that each grid cell in the cloud layer of DYCOMS(between 400 m and the inversion height) has at least min_count superdroplets.
+    If a cell has fewer than min_count superdroplets, it will borrow superdroplets from aerosol heavy cells with more than min_count superdroplets,
+    superdroplets will be merged to free up slots, and the borrowed superdroplets will be cloned (and halved) from the depleted cell to maintain the 
+    total number of superdroplets and real droplets.
+    This is done to maintain a sufficient number of superdroplets for accurate representation of the droplet size distribution in each grid cell.
+"""
 function keep_layer_filled!(::DynON, droplets, grid, spatialsettings, diagnosticsettings, constants; min_count::Int = 100)
     FT = eltype(droplets.X)
     fill_grid_ranges!(droplets)  # ensure ranges are current
@@ -322,25 +354,3 @@ function keep_layer_filled!(::DynON, droplets, grid, spatialsettings, diagnostic
 
     return nothing
 end
-
-# function recycle_precipitation!(::DynON,droplets, grid, spatialsettings, diagnosticsettings, coagdata, constants,output_step)
-#     # Simple precipitation recycling: if droplets are in the bottom cell and larger than a threshold, reinitialize them as aerosols in the top cell, adding mass to surface precipitation diagnostic
-#     start = findfirst(k -> droplets.z_loc[k] <= 0, coagdata.I) 
-#     if start == nothing
-#         return
-#     end
-#     fallendrops_idx = start:findlast(k -> droplets.z_loc[k] <= 0, coagdata.I)
-#     precip_mass = sum(droplets.X[fallendrops_idx] .* droplets.ξ[fallendrops_idx]) * constants.ρl
-#     grid.output.surface_precipitation[output_step] += precip_mass / (spatialsettings.area_per_grid * spatialsettings.dt_output) #
-#     # Reinitialize precipitating droplets as aerosols in the top cell
-#     # droplets.X[fallendrops_idx] .= 4pi/3 .*droplets.dry_r3[fallendrops_idx] # reset to dry mass
-#     # droplets.cell_id[fallendrops_idx] .= spatialsettings.Nz # move to top
-#     # droplets.z_loc[fallendrops_idx] .= spatialsettings.Z_max # move to top, should we move to below inversion?
-#     # droplets.w_prime[fallendrops_idx] .= 0
-#     droplets.ξ[fallendrops_idx] .= 0 # set multiplicity to 0 so they don't affect diagnostics until they grow again, but keep mass so they can
-#     # split_highest_multiplicity!(droplets) # split the highest multiplicity drops into many smaller drops to avoid having a few huge drops with large multiplicity that dominate the diagnostics. This is a bit hacky but it allows us to keep the mass of the precipitating drops without having a few huge drops with large multiplicity that dominate the diagnostics. We could also just set the mass to 0 and let them grow again, but this way we can keep track of the precipitating mass in the diagnostics without having a few huge drops with large multiplicity that dominate the diagnostics.
-
-#     # droplets.ξ[fallendrops_idx] how to reset multiplicity? these are lots of initial drops that collided
-#     return
-# end
-        

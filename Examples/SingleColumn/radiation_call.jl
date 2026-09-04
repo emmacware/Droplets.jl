@@ -340,9 +340,7 @@ function compute_radiative_fluxes!(grid::scm_eulerian_arrays{FT},spatialsettings
 end
 
 # Applies the last-computed radiative heating rate (raddata.hr_lay) to T/θ/ρ for one
-# timestep. Runs every step regardless of whether compute_radiative_fluxes! ran this
-# step, so the RTE solve can be called at a coarser cadence than dt (see n_rad in
-# scm_settings) while the heating tendency itself is still integrated at dt.
+# timestep. Runs every step regardless of whether compute_radiative_fluxes! was called
 function apply_radiative_heating!(grid::scm_eulerian_arrays{FT}, raddata::radiation_data, constants::Constants{FT}, dt::FT)::Nothing where FT<:AbstractFloat
     nz = grid.nz
     hr = @view raddata.hr_lay[1:nz,1]
@@ -356,7 +354,8 @@ function apply_radiative_heating!(grid::scm_eulerian_arrays{FT}, raddata::radiat
     return nothing
 end
 
-function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
+# Extends Droplets.radiation_function so that Droplets isnt dependent on RRTMGP
+function Droplets.radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT}, diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
     if (i) % n_rad == 0 || i == 1
         compute_radiative_fluxes!(grid, spatialsettings, diagnosticsettings, constants, raddata)
     end
@@ -366,102 +365,3 @@ function radiation_function!(::DynON,grid::scm_eulerian_arrays{FT},spatialsettin
     return nothing
 end
 
-function radiation_function!(::DynOFF,grid::scm_eulerian_arrays{FT},spatialsettings::spatial_settings_1d{FT},
-    diagnosticsettings::diagnostic_settings{FT}, constants::Constants{FT},raddata::radiation_data, dt::FT, i::Int, n_rad::Int=1)::Nothing where FT<:AbstractFloat
-end
-
-
-
-
-
-# function radiation_function!(grid,spatialsettings, diagnosticsettings, constants,raddata, dt, i)::Nothing
-    
-
-#     FT = eltype(raddata.flux_up_lw)
-#     CArad = raddata.CArad
-#     context = CArad.context
-#     device = CArad.device
-#     DA = CArad.DA
-#     param_set = CArad.paramset
-#     grid_params = CArad.grid_params
-#     as = raddata.atmospheric_state
-#     ncol = CArad.ncol
-#     nlay = CArad.nlay
-#     n_bnd = CArad.nband_lw
-
-
-#     #Profiles
-#     fill_full_atmosphere(grid,as,constants,CArad)
-#     fill_liquid_water_diagnostics(grid, diagnosticsettings,CArad,as)
-
-#     nlay = CArad.nlay
-#     ncol = CArad.ncol
-#     n_bnd = CArad.nband_lw
-#     col_dry = reshape(view(as.layerdata, 1, :), nlay, ncol)
-#     p_lay = reshape(view(as.layerdata, 2, :), nlay, ncol)
-#     t_lay = reshape(view(as.layerdata, 3, :), nlay, ncol)
-#     rel_hum = reshape(view(as.layerdata, 4, :), nlay, ncol)
-#     vmr_h2o = reshape(view(as.vmr.vmr, CArad.idx_gases["h2o"], :, 1), nlay, ncol)
-
-#     compute_col_gas!(device, as.p_lev, col_dry, param_set, vmr_h2o, CArad.lat) # the example skips lat based gravity calculation
-#     compute_relative_humidity!(device, rel_hum, p_lay, t_lay, param_set, vmr_h2o) # compute relative humidity
-
-
-#     F0 = 70.0
-#     F1 = 22.0
-#     alpha = 1.0
-#     ρi = 1.12 * 1e-3
-#     kappa = 85.0
-#     D = 3.75*1e-6
-#     inv_idx = findfirst(k -> grid.states.qv[k] < 0.008, 1:grid.nz)
-#     zi = grid.centers_z[inv_idx]
-
-#     grid.states.ql_tmp .= compute_ql_at_cell.(grid.states, 1:grid.nz)
-#     raddata.flux_net .=0
-
-#     for k in 1:grid.nz
-#         z = grid.centers_z[k]
-#         raddata.flux_net[k,1] = F0 * exp(-kappa * sum(grid.states.ql_tmp[k:end].*grid.states.ρ[k:end])) +
-#                     F1 * exp(-kappa * sum(grid.states.ql_tmp[1:k].*grid.states.ρ[1:k]))
-#         if z > zi
-#             raddata.flux_net[k,1] += alpha * ρi * constants.Cp_air * D *
-#                     (0.25*(z-zi)^(4/3)+ zi*(z-zi)^(1/3))
-#         end
-#     end
-
-
-#     # raddata.flux_net .= CArad.slv_lw.flux.flux_net #.+ CArad.slv_sw.flux.flux_net
-#     cp_d_ = FT(RRTMGP.Parameters.cp_d(param_set))
-#     grav_ = FT(RRTMGP.Parameters.grav(param_set))
-
-#     compute_gray_heating_rate!(device,raddata.hr_lay,as.p_lev,ncol,nlay,raddata.flux_net,cp_d_,grav_)
-
-#     grid.states.T_tmp .+= dt .* @view raddata.hr_lay[1:nz,1] 
-#     raddata.cloud_heating_delta .+= dt .* @view raddata.hr_lay[1:nz,1]
-
-#     grid.states.θ .= theta_from_T(grid.states.T_tmp, grid.states.P, constants)
-#     grid.states.ρ .= ρ_ideal_gas(grid.states.P, grid.states.T_tmp, grid.states.qv, constants)
-    
-#     ###Add in other updates
-    
-#     raddata.flux_net_droplet .= 0#zeros(FT,nlay,n_bnd)
-#     for ibnd in 1:n_bnd
-        
-#         totplnk = view(CArad.lookup_lw.planck.tot_planck, :, ibnd)
-#         (; t_planck) = CArad.lookup_lw.planck
-
-        
-#         @inbounds begin
-#             for glay in 1:grid.nz
-#                 if as.cloud_state.mask_lw[glay,1]
-#                     bb_flux = pi * Optics.interp1d_equispaced(t_lay[glay,1], t_planck, totplnk) # t_lay from the timestep before update
-#                     raddata.flux_net_droplet[glay,ibnd] = bb_flux - 0.5 * (raddata.flux_up_arr[glay,ibnd] + raddata.flux_dn_arr[glay+1,ibnd])
-                    
-#                 end
-#             end
-#         end
-#     end
-
-
-#     return nothing#flux_net_droplet
-# end

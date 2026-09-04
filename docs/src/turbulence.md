@@ -1,6 +1,6 @@
 # Turbulence
 
-TKE-based mixing scheme.
+TKE-based turbulence closures, as well as droplet turbulent motion.
 
 ```@autodocs
 Modules = [Droplets]

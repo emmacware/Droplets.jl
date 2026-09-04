@@ -43,11 +43,11 @@ pkg> instantiate
 
 to run the [Shima et al., 2009](https://doi.org/10.1002/qj.441) box model collision-coalecence case (using the Golovin kernel with an initial exponential distribution) from terminal, navigate to the Droplets/Examples directory and run
 ```bash
-julia run_file.jl
+julia SDMCollisions/run_file.jl
 ```
 
 or on Colab in a jupyter notebook (making sure to change runtime type to Julia):
-[![launch on Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/emmacware/Droplets.jl/blob/main/Examples/box_collision_coalescence.ipynb)
+[![launch on Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/emmacware/Droplets.jl/blob/main/Examples/SDMCollisions/box_collision_coalescence.ipynb)
 
 Help for the Droplets functions and structs can searched with 
 

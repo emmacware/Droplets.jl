@@ -3,7 +3,7 @@ using Random
 using Plots
 using Droplets
 using CPUTime
-include("testfunctions.jl")
+include("../testfunctions.jl")
 
 FT = Float64
 

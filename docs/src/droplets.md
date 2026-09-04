@@ -1,6 +1,6 @@
 # Droplet Attributes
 
-Data structures holding superdroplet ensembles.
+Data structures holding superdroplet attributes.
 
 ```@autodocs
 Modules = [Droplets]
