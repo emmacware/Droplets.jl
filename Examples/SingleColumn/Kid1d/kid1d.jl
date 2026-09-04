@@ -6,9 +6,8 @@ using Distributions
 using Interpolations
 using Random
 
-include("../DyCOMS/radiation_call.jl")
-include("../DyCOMS/initial_state_functions.jl")
-include("../DyCOMS/forward_solve.jl")
+include("../radiation_call.jl")
+include("../initial_state_functions.jl")
 # using OrdinaryDiffEqBDF
 
 const FT = Float64
@@ -25,7 +24,7 @@ const nz    = Int(Z_max / dz)   #
 const dt    = 5.0      # s
 const dt_coag = 0.1
 const dt_cond = 0.1
-const Ns_per_grid = 32
+const Ns_per_grid = 128
 seed = 42
 Random.seed!(seed)
 const t_max    = 3600  # s  (60 min)
@@ -58,9 +57,6 @@ const P_surface_kid            = 99000.0 # Pa  (Shipway & Hill 2012 reference)
 
 # ── Settings structs ──────────────────────────────────────────────────────────
 
-
-
-#Settings Structs
 spatialsettings = spatial_settings_1d{FT}(Nz=nz, Z_max=Z_max,dt=dt, t_max=t_max, dt_output=t_output,area_per_grid=1.0,
     weighted_droplet_allocation=false)#5.0)
 
@@ -72,12 +68,11 @@ mpdatasettings = mpdata_settings_1d(nz,n_corr=2,nonoscillatory=true, vertical_bo
         thermo_variable = ThetalQtVar()
         )
 
-tkesettings = tke_settings{FT}()#u_star=u_star, geostrophic_u=geostrophic_u, geostrophic_v=geostrophic_v,
-    #LHF=surface_latent_heat_flux, SHF=surface_sensible_heat_flux)
+tkesettings = tke_settings{FT}() #necessary but not used
     
 diagnosticsettings = diagnostic_settings()
    
-#Default dynamics are all on
+#Dynamics
 base_scm = (
     Δt                          = dt,
     turbulence                  = DynOFF(),
@@ -106,64 +101,39 @@ scmsettings = scm_settings{FT}(; base_scm...,)
 diagnosticsettings = diagnostic_settings()
 
 
-# Create environmnent
-grid, droplets, coagdata,conddata,raddata,mpdatatmp,turbdata = initialize_scm_environment(
-    nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), initial_aerosol_dist,
-    coagsettings,spatialsettings,condensationsettings,tkesettings,kid_constants;
-    deterministic_multiplicity=true, hydrostatic_pysdm=true
-    )
-
-CArad = raddata.CArad
-R_array = range(CArad.lookup_lw_cld.bounds[1], CArad.lookup_lw_cld.bounds[2],
-                length=CArad.lookup_lw_cld.dims[3])  # μm
-
-const absliq_r_interp = ntuple(CArad.nband_lw) do ibnd
-    ext, ssa, _ = LookUpTables.getview_liqdata(CArad.lookup_lw_cld, ibnd)
-    absliq = collect(ext .* (1 .- ssa))
-    linear_interpolation(R_array, absliq, extrapolation_bc=Flat())
-end
-
-
-for i in 1:Int(spatialsettings.t_max / dt)
-    if i*dt % 100 == 0
-        println("Timestep: ", i*dt)
-    end
-
+# step_forcing! updates grid.wind.w (used by
+# advection) and rebuilds the droplet-motion prescribed_w(z) closure every step.
+function w_forcing!(grid, droplets, i, dt)
     rho_w_t = prescribed_rho_w(i * dt)
     grid.wind.w .= rho_w_t #says w but is really just advector, might namechange later
-    prescribed_w(z) = rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
-    single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-    coagdata,conddata,raddata,turbdata,
-    diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,kid_constants,scmsettings,tkesettings,absliq_r_interp,i)
-
+    return z -> rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
 end
 
-# #3.869 ms (20903 allocations: 4.21 MiB)
-# rho_w_t = prescribed_rho_w(20)
-# grid.wind.w .= rho_w_t
-# prescribed_w(z) = rho_w_t / grid.states.ρ_dry[clamp(floor(Int, z / dz) + 1, 1, nz)]
-# @btime  single_column_timestep(grid,dt,droplets,coagsettings,spatialsettings,condensationsettings,
-# coagdata,conddata,raddata,turbdata,
-# diagnosticsettings,prescribed_w, mpdatatmp, mpdatasettings,kid_constants,scmsettings,tkesettings,absliq_r_interp,20)
+# Build environment and run
+grid = run_scm(nz, dz, P_surface_kid, θ_initial, qv_initial, z -> zero(FT), initial_aerosol_dist,
+    coagsettings, spatialsettings, condensationsettings, tkesettings, kid_constants,
+    mpdatasettings, diagnosticsettings, scmsettings;
+    deterministic_multiplicity = true,
+    hydrostatic_pysdm = true,
+    step_forcing! = w_forcing!,
+    )
+#output is in grid.output
 
-penv = plot_env_profiles(grid, kid_constants)
 #put tkesettings.turbulence_scheme in the title
 ptime = plot!(plot_output_timeseries(grid; constants=kid_constants),tskips=20)#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
+savefig("DyCOMS_SCM_KiD_Profiles.pdf")
 
-# savefig("DyCOMS_SCMno_wprime.pdf")
 
 p1 = heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
     grid.output.cloud_LWC,color=:BuPu,clims=(0,2e-3),colorbar=false,title="Cloud LWC")
 xlabel!("t (s)")
 yaxis!("z (m)")
-
 p2 = heatmap(range(1, 3600,length(grid.output.ql[1,:])),grid.centers_z,     
     grid.output.rain_LWC,color=:BuPu,clims=(0,2e-3),colorbar=false,title="Rain LWC")
 xlabel!("t (s)")
 yaxis!("z (m)")
-    
 cbar = heatmap([0],range(0, 2e-3, length=100),  reshape(range(0, 2e-3, length=100), 1, :), color=:BuPu, ylabel="LWC (kg/m³)",colorbar=false ,xticks=false)
-
 l = @layout [a b c{0.05w}]
 plot(p1, p2, cbar, layout=l, size=(900,400),plot_title="K1D Droplets.jl ",
 left_margin=3Plots.mm, bottom_margin=3Plots.mm,top_margin=3Plots.mm)
+savefig("DyCOMS_SCM_KiD_LWC.pdf")

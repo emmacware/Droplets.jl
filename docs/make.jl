@@ -20,6 +20,8 @@ makedocs(
         "Condensation" => Condensation,
         "Turbulence" => "turbulence.md",
         "Advection" => "advection.md",
+        "Thermodynamics" => "thermodynamics.md",
+        "Single-Column Model" => "scm.md",
         "Droplet Attributes" => "droplets.md",
         "Settings" => "settings.md",
         "Constants" => "constants.md",

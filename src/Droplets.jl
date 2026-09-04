@@ -11,5 +11,7 @@ include(joinpath("SDfunc","SCM","single_column.jl"))
 include(joinpath("SDfunc","Turbulence","tke.jl"))
 include(joinpath("SDfunc", "Advection", "mpdata.jl"))
 include(joinpath("SDfunc","Thermodynamics","conversions.jl"))
+include(joinpath("SDfunc","Thermodynamics","initial_state.jl"))
+include(joinpath("SDfunc","SCM","advance.jl"))
 
 end
