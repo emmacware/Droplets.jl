@@ -120,7 +120,7 @@ run_scm!(grid, droplets, scmdata, kid_constants, scmsettings, z -> zero(FT);
 
 
 #put tkesettings.turbulence_scheme in the title
-ptime = plot!(plot_output_timeseries(grid; constants=kid_constants),tskips=20)#, Coalescence: $(scmsettings.coalescence), Turbulent Droplet Diffusion: $(scmsettings.turbulent_droplet_diffusion_on)")
+ptime = plot!(plot_output_timeseries(grid; constants=kid_constants),tskips=20)#, Coalescence: $(scmsettings.dynamics.coalescence), Turbulent Droplet Diffusion: $(scmsettings.dynamics.turbulent_droplet_diffusion_on)")
 savefig("DyCOMS_SCM_KiD_Profiles.pdf")
 
 

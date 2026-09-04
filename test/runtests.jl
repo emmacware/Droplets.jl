@@ -46,3 +46,7 @@ end
 @testset "MPDATA" begin
     include("mpdata_tests.jl")
 end
+
+@testset "SCM" begin
+    include("scm_tests.jl")
+end

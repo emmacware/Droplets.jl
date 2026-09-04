@@ -267,7 +267,7 @@ end
     dz = FT(50.0)
     dt = FT(5.0)
     tke = tke_settings{FT}()
-    scmset = scm_settings{FT}()
+    scmset = dynamic_settings()
     run_tke!(grid) = turb_timestep!(DynON(), grid, tke, constants, dt, scmset, make_turbdata(nz))
 
     @testset "TKE floor is enforced after timestep" begin
