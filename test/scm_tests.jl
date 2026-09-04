@@ -69,8 +69,14 @@ end
 
     @test all(isfinite, grid.states.qv)
     @test all(isfinite, droplets.X)
-    # every droplet should have moved down by exactly w*t_max = -0.5*5 = -2.5 m
-    @test all(droplets.z_loc .- z_loc_before .≈ -2.5)
+    # every droplet should have moved down by exactly w*t_max = -0.5*5 = -2.5 m,
+    # except any that started close enough to the domain floor to get clamped by
+    # update_droplet_positions!'s z_loc >= -1 floor (init_droplets_scm's z_loc is
+    # randomly placed within its cell regardless of deterministic_multiplicity, so
+    # which droplets those are isn't reproducible across platforms/RNG streams)
+    unclamped = z_loc_before .> 2.5
+    @test any(unclamped)
+    @test all(droplets.z_loc[unclamped] .- z_loc_before[unclamped] .≈ -2.5)
 end
 
 @testset "run_scm!: step_forcing! overrides prescribed_w per step" begin
@@ -87,6 +93,9 @@ end
 
     @test all(isfinite, droplets.X)
     # step_forcing! always returns a nonzero override, so prescribed_w's zero must
-    # never be used: droplets should move exactly as in the previous test
-    @test all(droplets.z_loc .- z_loc_before .≈ -2.5)
+    # never be used: droplets should move exactly as in the previous test (modulo
+    # the domain-floor clamp — see the comment in the test above)
+    unclamped = z_loc_before .> 2.5
+    @test any(unclamped)
+    @test all(droplets.z_loc[unclamped] .- z_loc_before[unclamped] .≈ -2.5)
 end
