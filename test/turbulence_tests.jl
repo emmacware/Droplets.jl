@@ -9,7 +9,6 @@ using Statistics
 
 FT = Float64
 
-"""Build a minimal grid with no droplets (all grid_range = nothing)."""
 function make_test_grid(nz::Int, dz::FT; θ_profile=nothing, qv=nothing, e=nothing) where FT
     Ns = 0
     drops = droplet_attributes_1d(
@@ -40,7 +39,7 @@ end
 make_turbdata(nz::Int) = turbulence_data(FT, nz)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  implicit_diffuse!  (standalone, no grid needed)
+# 1.  implicit_diffuse!
 # ─────────────────────────────────────────────────────────────────────────────
 
 @testset "implicit_diffuse!" begin
@@ -325,25 +324,18 @@ end
         @test grid.wind.u != u0 || grid.wind.v != v0
     end
 
-    # @testset "geostrophic wind at rest produces no spurious Coriolis forcing" begin
-    #     # If u == u_geo and v == v_geo everywhere, Coriolis tendency = 0
-    #     u_geo = FT(7.0);  v_geo = FT(-2.0)
-    #     tke_geo = tke_settings{FT}(
-    #         geostrophic_u = z -> u_geo,
-    #         geostrophic_v = z -> v_geo,
-    #     )
-    #     grid = make_test_grid(nz, dz)
-    #     grid.wind.u .= u_geo
-    #     grid.wind.v .= v_geo
-    #     grid.states.e .= FT(0)  # nonzero TKE to avoid floor effects
-    #     u_before = copy(grid.wind.u)
-    #     v_before = copy(grid.wind.v)
-    #     # Run just the Coriolis part by using a tiny TKE dt so diffusion is negligible
-    #     no_prog_tke_timestep!(grid, tke_geo, constants, FT(0.001))
-    #     # Coriolis du = f*(v - v_geo) = 0, dv = -f*(u - u_geo) = 0
-    #     @test all(isapprox.(grid.wind.u .- u_before, 0.0; atol=1e-6))
-    #     @test all(isapprox.(grid.wind.v .- v_before, 0.0; atol=1e-6))
-    # end
+    @testset "geostrophic wind at rest produces no spurious Coriolis forcing" begin
+        u_geo = FT(7.0); v_geo = FT(-2.0)
+        tke_geo = tke_settings{FT}(u_star=FT(0.0), geostrophic_u=z -> u_geo, geostrophic_v=z -> v_geo)
+        grid = make_test_grid(nz, dz)
+        grid.wind.u .= u_geo
+        grid.wind.v .= v_geo
+        u_before = copy(grid.wind.u)
+        v_before = copy(grid.wind.v)
+        turb_timestep!(DynON(), grid, tke_geo, constants, dt, scmset, make_turbdata(nz))
+        @test all(isapprox.(grid.wind.u .- u_before, 0.0; atol=1e-8))
+        @test all(isapprox.(grid.wind.v .- v_before, 0.0; atol=1e-8))
+    end
 
     @testset "strongly sheared wind spins up TKE" begin
         # Large vertical shear → P_shear > 0 → TKE should increase from floor
@@ -360,23 +352,3 @@ end
     end
 end
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5.  K_m / K_h sanity checks (via tke_settings defaults)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@testset "diffusivity magnitudes" begin
-    @testset "K_m = c_m * l * sqrt(e), spot-check" begin
-        c_m = FT(0.1)
-        l   = FT(30.0)
-        e   = FT(0.5)
-        K_m_expected = c_m * l * sqrt(e)
-        @test isapprox(K_m_expected, c_m * l * sqrt(e); rtol=1e-12)
-    end
-
-    @testset "K_h = K_m / Pr (Pr = 0.42)" begin
-        K_m = FT(1.5)
-        Pr  = FT(0.42)
-        K_h = K_m / Pr
-        @test K_h > K_m  # heat diffuses faster than momentum (Pr < 1)
-    end
-end

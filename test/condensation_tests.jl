@@ -285,9 +285,11 @@ end
 
     R_set = volume_to_radius(drops.X[1] / FT(0.98))
 
-    # NOTE: code has a known /2 bug: R_crit = sqrt(3b/a)/2 instead of sqrt(3b/a)
+    # BUG: set_X_crit! computes R_crit = sqrt(3b/a)/2 instead of sqrt(3b/a)
+    # everywhere else in the codebase (kohler_Rcrit here, dXkappakohler_bisection's
+    # own r_crit) uses the un-halved formula.
     R_crit_theory = kohler_Rcrit(T, kappa, dry_r3)
-    @test R_set ≈ R_crit_theory / 2  rtol=0.01
+    @test_broken R_set ≈ R_crit_theory  rtol=0.01
 
     @test drops.X[1] > 0
     @test volume_to_radius(drops.X[1]) > dry_r

@@ -35,18 +35,54 @@ end
     include("coalescence_tests.jl")
 end
 
+@testset "Coalescence (spatial/1D)" begin
+    include("coalescence_spatial_tests.jl")
+end
+
+@testset "Accuracy (Golovin analytic, kernels, binning)" begin
+    include("accuracy_tests.jl")
+end
+
 @testset "Condensation" begin
     include("condensation_tests.jl")
+end
+
+@testset "Condensation (bisection accuracy)" begin
+    include("condensation_bisection_tests.jl")
 end
 
 @testset "Turbulence" begin
     include("turbulence_tests.jl")
 end
 
+@testset "Motion / droplet diffusion" begin
+    include("motion_tests.jl")
+end
+
+@testset "TKE physics" begin
+    include("tke_physics_tests.jl")
+end
+
+@testset "Thermodynamics" begin
+    include("thermodynamics_tests.jl")
+end
+
 @testset "MPDATA" begin
     include("mpdata_tests.jl")
 end
 
+@testset "MPDATA (2D)" begin
+    include("mpdata_2d_tests.jl")
+end
+
 @testset "SCM" begin
     include("scm_tests.jl")
+end
+
+@testset "SCM advance (recycling/keep_layer_filled!)" begin
+    include("scm_advance_tests.jl")
+end
+
+@testset "SCM timestep dynamics wiring" begin
+    include("scm_timestep_dynamics_tests.jl")
 end
