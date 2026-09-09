@@ -149,6 +149,33 @@ end
     @test all(l[2:end] .>= dz - 1e-9)
 end
 
+@testset "diffuse_fields!: SHF and LHF enter as the exact surface-flux boundary condition" begin
+    # With K_h=K_m=K_e=0 everywhere, implicit_diffuse! collapses to just the surface
+    # flux term added to the bottom cell (b[1]=1 exactly), so θl_tmp[1] and qt_tmp[1]
+    # should advance by exactly dt*flux/dz, with SHF/LHF converted to kinematic flux
+    # the same way diffuse_fields! does internally.
+    nz, dz = 2, 40.0
+    grid = make_grid(nz, dz)
+    tke = tke_settings{FT}()
+    turbdata = turbulence_data(FT, nz)
+    K_h = zeros(FT, nz); K_m = zeros(FT, nz); K_e = zeros(FT, nz)
+    dt = FT(5.0)
+
+    grid.states.qt_tmp .= grid.states.qv .+ grid.states.ql_tmp
+    θl_before = grid.states.θl_tmp[1]
+    qt_before = grid.states.qt_tmp[1]
+    ρ1 = grid.states.ρ[1]
+    P1 = grid.states.P[1]
+
+    diffuse_fields!(grid, tke, K_h, K_m, K_e, constants, dt, turbdata)
+
+    theta_surf_flux = tke.SHF / (ρ1 * constants.Cp_air * (P1 / constants.P0)^(constants.Rd / constants.Cp_air))
+    lhf_flux = tke.LHF / (constants.L * ρ1)
+
+    @test grid.states.θl_tmp[1] ≈ θl_before + dt * theta_surf_flux / dz rtol=1e-10
+    @test (grid.states.qv[1] + grid.states.ql_tmp[1]) ≈ qt_before + dt * lhf_flux / dz rtol=1e-10
+end
+
 @testset "edmfx_mixing_length!: l_W (Blackadar neutral-scaling) formula, no-TKE/no-stratification limit" begin
     nz, dz = 10, 50.0
     tke = tke_settings{FT}()

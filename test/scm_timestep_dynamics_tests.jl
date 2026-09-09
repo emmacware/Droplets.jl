@@ -134,6 +134,31 @@ step!(grid, droplets, scmdata, scmsettings; w=z -> FT(0.0)) =
         end
     end
 
+    @testset "turbulence: qt_tmp/θl_tmp are re-seeded from qv/ql before diffusion (advance.jl:69)" begin
+        # single_column_timestep re-derives qt_tmp = qv + ql_tmp (and θl_tmp) from the
+        # current state just before turb_timestep! diffuses them; if that seeding were
+        # ever dropped or moved after the diffusion call, the column would diffuse a
+        # stale/uninitialized qt_tmp instead of the real state. With diffusion otherwise
+        # conservative (no-flux top, flux-form interior), total column qt should change
+        # by exactly the surface LHF input and nothing else.
+        nz, dz = 5, 50.0
+        grid, droplets, scmdata, scmsettings = make_wiring_env(nz, dz;
+            dynamics=all_off(turbulence=DynON()))
+
+        Droplets.compute_ql_all_cells!(grid.states, constants)
+        qt_before_total = sum(grid.states.qv .+ grid.states.ql_tmp)
+        ρ1 = grid.states.ρ[1]
+
+        step!(grid, droplets, scmdata, scmsettings)
+
+        Droplets.compute_ql_all_cells!(grid.states, constants)
+        qt_after_total = sum(grid.states.qv .+ grid.states.ql_tmp)
+
+        tke = scmsettings.tkesettings
+        expected_input = scmsettings.Δt * tke.LHF / (constants.L * ρ1) / dz
+        @test (qt_after_total - qt_before_total) ≈ expected_input rtol=1e-6
+    end
+
     @testset "recycling: dynamics.recycling gates surface_precipitation bookkeeping" begin
         for (dyn_rec, should_change) in [(DynOFF(), false), (DynON(), true)]
             grid, droplets, scmdata, scmsettings = make_wiring_env(10, FT(30.0); Ns=50,

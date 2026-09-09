@@ -161,6 +161,45 @@ end
     @test state2.T_tmp[1] == T0  # strict
 end
 
+@testset "condensation_time_step_spatial!(DynON, ...): qt and θl are conserved across a step" begin
+    # both qt and θl should be invariant through condensation
+    nz, nsd = 1, 4
+    cst = Constants{FT}()
+    condsettings = condensation_settings{FT}(kappa=FT(0.61))
+    spatial = spatial_settings_1d{FT}(Nz=nz, Z_max=FT(100.0))
+    dynamics = dynamic_settings()  # thermo_feedback = DynON() by default
+
+    Rs = FT[3e-6, 5e-6, 7e-6, 9e-6]
+    dry_r = FT(0.05e-6)
+    droplets = droplet_attributes_1d{FT}(
+        fill(100, nsd), radius_to_volume.(Rs), fill(dry_r^3, nsd),
+        zeros(FT, nsd), ones(Int, nsd), zeros(FT, nsd), [1:nsd], collect(1:nsd),
+    )
+
+    T0 = FT(285.0); P0 = FT(97000.0); qv0 = FT(0.012)
+    state = (
+        T_tmp=[T0], θ=[theta_from_T(T0, P0, qv0, cst)], P=[P0], qv=[qv0],
+        ρ=[ρ_ideal_gas(P0, T0, qv0, cst)], droplets=droplets, spatial=spatial, ql_tmp=[FT(0.0)],
+    )
+
+    compute_ql_at_cell!(state, 1, cst)
+    qt_before = state.qv[1] + state.ql_tmp[1]
+    θl_before = θl(state.P[1], state.T_tmp[1], state.ql_tmp[1], state.qv[1], cst)
+    qv_before = state.qv[1]
+
+    conddata = condensation_data(FT, nz, nsd)
+    condensation_time_step_spatial!(DynON(), droplets, state, nz, FT(1.0), conddata, cst,
+        condsettings, spatial, nothing, dynamics, FT(0.0))
+
+    compute_ql_at_cell!(state, 1, cst)
+    qt_after = state.qv[1] + state.ql_tmp[1]
+    θl_after = θl(state.P[1], state.T_tmp[1], state.ql_tmp[1], state.qv[1], cst)
+
+    @test state.qv[1] != qv_before  # sanity: the step actually did something
+    @test qt_after ≈ qt_before rtol=1e-10
+    @test θl_after ≈ θl_before rtol=1e-10
+end
+
 @testset "condensation_time_step_spatial!(DynOFF, ...): strict no-op" begin
     nz, nsd = 1, 2
     cst = Constants{FT}()
